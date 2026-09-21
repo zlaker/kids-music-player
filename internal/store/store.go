@@ -100,7 +100,7 @@ func (s *Store) Playlists() []Playlist {
 	out := make([]Playlist, len(s.playlists))
 	copy(out, s.playlists)
 	for i := range out {
-		out[i].Tracks = append([]string(nil), s.playlists[i].Tracks...)
+		out[i].Tracks = copyTracks(s.playlists[i].Tracks)
 	}
 	return out
 }
@@ -110,7 +110,7 @@ func (s *Store) Playlist(id string) (Playlist, bool) {
 	defer s.mu.Unlock()
 	for _, p := range s.playlists {
 		if p.ID == id {
-			p.Tracks = append([]string(nil), p.Tracks...)
+			p.Tracks = copyTracks(p.Tracks)
 			return p, true
 		}
 	}
@@ -157,7 +157,7 @@ func (s *Store) AddTracks(id string, tracks []string) (Playlist, error) {
 		if err := s.saveJSON("playlists.json", s.playlists); err != nil {
 			return Playlist{}, err
 		}
-		p.Tracks = append([]string(nil), p.Tracks...)
+		p.Tracks = copyTracks(p.Tracks)
 		return p, nil
 	}
 	return Playlist{}, ErrPlaylistNotFound
@@ -187,7 +187,7 @@ func (s *Store) RemoveTrack(id, track string) (Playlist, error) {
 		if err := s.saveJSON("playlists.json", s.playlists); err != nil {
 			return Playlist{}, err
 		}
-		p.Tracks = append([]string(nil), p.Tracks...)
+		p.Tracks = copyTracks(p.Tracks)
 		return p, nil
 	}
 	return Playlist{}, ErrPlaylistNotFound
@@ -204,13 +204,13 @@ func (s *Store) ReplacePlaylist(id, name string, tracks []string) (Playlist, err
 			p.Name = name
 		}
 		if tracks != nil {
-			p.Tracks = append([]string(nil), tracks...)
+			p.Tracks = copyTracks(tracks)
 		}
 		s.playlists[i] = p
 		if err := s.saveJSON("playlists.json", s.playlists); err != nil {
 			return Playlist{}, err
 		}
-		p.Tracks = append([]string(nil), p.Tracks...)
+		p.Tracks = copyTracks(p.Tracks)
 		return p, nil
 	}
 	return Playlist{}, ErrPlaylistNotFound
@@ -281,6 +281,12 @@ func (s *Store) saveJSON(name string, v any) error {
 		return fmt.Errorf("replace %s: %w", name, err)
 	}
 	return nil
+}
+
+func copyTracks(tracks []string) []string {
+	out := make([]string, len(tracks))
+	copy(out, tracks)
+	return out
 }
 
 func newID() (string, error) {
