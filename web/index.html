@@ -104,7 +104,7 @@
                   <div class="text-orange-400 font-bold" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
                 </div>
               </button>
-              <button @click="addTrackPath = item.path; panel = 'playlists'" class="min-h-12 min-w-12 rounded-2xl bg-cream font-extrabold">+</button>
+              <button @click="startAddTracks([item.path])" class="min-h-12 min-w-12 rounded-2xl bg-cream font-extrabold">+</button>
             </div>
           </template>
         </div>
@@ -148,17 +148,55 @@
               <input x-model="playlistName" placeholder="Новый плейлист" class="flex-1 min-h-12 rounded-2xl px-4 font-bold">
               <button class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Создать</button>
             </form>
+            <p x-show="addTrackPaths.length" class="mb-3 font-extrabold text-orange-400">Выберите плейлист</p>
             <div x-show="playlists.length === 0" class="font-extrabold text-orange-300">Плейлистов нет</div>
             <div class="space-y-3">
               <template x-for="pl in playlists" :key="pl.id">
                 <div class="bg-white rounded-2xl p-3">
-                  <div class="font-extrabold text-lg" x-text="pl.name"></div>
-                  <div class="text-orange-400 font-bold mb-2" x-text="pl.tracks.length + ' треков'"></div>
+                  <button @click="addTrackPaths.length ? addToPlaylist(pl) : openPlaylist(pl.id)" class="w-full text-left">
+                    <div class="font-extrabold text-lg" x-text="pl.name"></div>
+                    <div class="text-orange-400 font-bold mb-2" x-text="(pl.tracks ? pl.tracks.length : 0) + ' треков'"></div>
+                  </button>
                   <div class="flex flex-wrap gap-2">
-                    <button @click="playPlaylist(pl.id); closePanel()" class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Играть</button>
-                    <button x-show="addTrackPath" @click="addToPlaylist(pl)" class="min-h-12 px-4 rounded-2xl bg-cream font-extrabold">Добавить трек</button>
+                    <button x-show="addTrackPaths.length" @click="addToPlaylist(pl)" class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Добавить</button>
+                    <button x-show="!addTrackPaths.length" @click="openPlaylist(pl.id)" class="min-h-12 px-4 rounded-2xl bg-cream font-extrabold">Открыть</button>
+                    <button x-show="!addTrackPaths.length" @click="playPlaylist(pl.id); closePanel()" class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Играть</button>
                     <button @click="deletePlaylist(pl.id)" class="min-h-12 px-4 rounded-2xl bg-cream font-extrabold">Удалить</button>
                   </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="panel === 'playlist' && currentPlaylist">
+          <div>
+            <button @click="openPlaylists()" class="w-full min-h-12 mb-4 rounded-2xl bg-white font-extrabold">← К плейлистам</button>
+            <div class="flex flex-wrap gap-2 mb-4">
+              <button
+                x-show="currentPlaylist.tracks && currentPlaylist.tracks.length"
+                @click="playPlaylist(currentPlaylist.id); closePanel()"
+                class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold"
+              >Играть</button>
+              <button @click="deletePlaylist(currentPlaylist.id)" class="min-h-12 px-4 rounded-2xl bg-cream font-extrabold">Удалить</button>
+            </div>
+            <div x-show="!currentPlaylist.tracks || currentPlaylist.tracks.length === 0" class="font-extrabold text-orange-300">
+              Пока нет треков. Нажмите + у песни.
+            </div>
+            <div class="space-y-2">
+              <template x-for="item in (currentPlaylist.tracks || [])" :key="item.path">
+                <div class="flex items-center gap-3 bg-white rounded-3xl p-3 shadow-sm" :class="(player.track && player.track.path === item.path ? 'ring-4 ring-orange-200 ' : '') + (item.played ? 'opacity-45' : '')">
+                  <button @click="playPlaylist(currentPlaylist.id, item.path); closePanel()" class="flex flex-1 items-center gap-3 min-h-16 text-left">
+                    <div class="w-16 h-16 rounded-2xl overflow-hidden bg-orange-50 shrink-0">
+                      <img x-show="item.hasCover" :src="coverUrl(item.path)" class="w-full h-full object-cover" alt="">
+                      <div x-show="!item.hasCover" class="w-full h-full grid place-items-center text-2xl">🎵</div>
+                    </div>
+                    <div>
+                      <div class="font-extrabold text-lg leading-tight" x-text="item.title || item.name || item.path"></div>
+                      <div class="text-orange-400 font-bold" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
+                    </div>
+                  </button>
+                  <button @click="removeFromPlaylist(item.path)" class="min-h-12 min-w-12 rounded-2xl bg-cream font-extrabold">−</button>
                 </div>
               </template>
             </div>
