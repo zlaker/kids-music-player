@@ -1,0 +1,17 @@
+[Unit]
+Description=Kids music player
+After=network.target
+
+[Service]
+Type=simple
+User=alex
+Group=alex
+WorkingDirectory=/home/alex/Apps/kids-music-player
+ExecStart=/home/alex/Apps/kids-music-player/kids-music-player -music /home/alex/Music -listen :21983 -state-dir /home/alex/Apps/kids-music-player/state
+Restart=on-failure
+RestartSec=3
+KillMode=process
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

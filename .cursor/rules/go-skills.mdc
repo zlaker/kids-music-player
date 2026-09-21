@@ -1,0 +1,14 @@
+---
+description: Load the Go skills orchestrator before any Go task
+alwaysApply: true
+---
+
+Before any Go coding, review, debugging, troubleshooting, or setup task, load the `golang-how-to` skill first — it routes to whichever other Go skills the task needs.
+
+For this repo, also load `go-api-design` when touching HTTP handlers and `golang-security` when serving files or accepting paths.
+
+Always apply:
+
+- `golang-error-handling`
+- `golang-security`
+- `golang-testing`
