@@ -14,9 +14,10 @@ function playerApp() {
     lastSeq: -1,
     history: [],
     playlists: [],
+    currentPlaylist: null,
     panel: null,
     playlistName: '',
-    addTrackPath: '',
+    addTrackPaths: [],
     now: Date.now(),
     duration: 0,
     localPosition: 0,
@@ -42,7 +43,8 @@ function playerApp() {
     get panelTitle() {
       if (this.panel === 'timer') return 'Таймер выключения';
       if (this.panel === 'history') return 'Проигранное';
-      if (this.addTrackPath) return 'Добавить в плейлист';
+      if (this.panel === 'playlist' && this.currentPlaylist) return this.currentPlaylist.name;
+      if (this.addTrackPaths.length) return 'Добавить в плейлист';
       return 'Плейлисты';
     },
     get sleepLeft() {
@@ -160,8 +162,9 @@ function playerApp() {
     async playFolder() {
       await this.tryPlay(() => this.api('/api/player/play', { method: 'POST', body: { folder: this.path } }));
     },
-    async playPlaylist(id) {
-      await this.tryPlay(() => this.api('/api/playlists/' + id + '/play', { method: 'POST', body: {} }));
+    async playPlaylist(id, path) {
+      const body = path ? { path } : {};
+      await this.tryPlay(() => this.api('/api/playlists/' + id + '/play', { method: 'POST', body }));
     },
     async tryPlay(fn) {
       this.notice = '';
@@ -202,7 +205,8 @@ function playerApp() {
       this.notice = '';
     },
     async openPlaylists() {
-      this.addTrackPath = '';
+      this.addTrackPaths = [];
+      this.currentPlaylist = null;
       this.panel = 'playlists';
       await this.refreshPlaylists();
     },
@@ -210,35 +214,60 @@ function playerApp() {
       const data = await this.api('/api/playlists');
       this.playlists = data.items || [];
     },
-    async createPlaylist() {
-      const name = this.playlistName.trim();
-      if (!name) return;
-      const tracks = this.addTrackPath ? [this.addTrackPath] : this.tracks.map((t) => t.path);
-      await this.api('/api/playlists', { method: 'POST', body: { name, tracks } });
-      this.playlistName = '';
-      this.addTrackPath = '';
-      await this.refreshPlaylists();
-    },
-    async createPlaylistFromFolder() {
-      this.addTrackPath = '';
+    async startAddTracks(paths) {
+      this.addTrackPaths = (paths || []).filter(Boolean);
+      this.currentPlaylist = null;
       this.panel = 'playlists';
       await this.refreshPlaylists();
     },
+    async openPlaylist(id) {
+      this.addTrackPaths = [];
+      this.panel = 'playlist';
+      this.currentPlaylist = await this.api('/api/playlists/' + id);
+    },
+    async createPlaylist() {
+      const name = this.playlistName.trim();
+      if (!name) return;
+      const pending = this.addTrackPaths.slice();
+      const pl = await this.api('/api/playlists', { method: 'POST', body: { name } });
+      this.playlistName = '';
+      if (pending.length) {
+        await this.api('/api/playlists/' + pl.id + '/tracks', { method: 'POST', body: { paths: pending } });
+      }
+      await this.openPlaylist(pl.id);
+    },
+    async createPlaylistFromFolder() {
+      await this.startAddTracks(this.tracks.map((t) => t.path));
+    },
     async addToPlaylist(pl) {
-      if (!this.addTrackPath) return;
-      const tracks = pl.tracks.slice();
-      if (!tracks.includes(this.addTrackPath)) tracks.push(this.addTrackPath);
-      await this.api('/api/playlists/' + pl.id, { method: 'PUT', body: { tracks } });
-      this.addTrackPath = '';
-      await this.refreshPlaylists();
+      if (!this.addTrackPaths.length) {
+        await this.openPlaylist(pl.id);
+        return;
+      }
+      const pending = this.addTrackPaths.slice();
+      await this.api('/api/playlists/' + pl.id + '/tracks', { method: 'POST', body: { paths: pending } });
+      await this.openPlaylist(pl.id);
+    },
+    async removeFromPlaylist(path) {
+      if (!this.currentPlaylist) return;
+      this.currentPlaylist = await this.api(
+        '/api/playlists/' + this.currentPlaylist.id + '/tracks/' + encodePath(path),
+        { method: 'DELETE' },
+      );
     },
     async deletePlaylist(id) {
+      const pending = this.addTrackPaths.slice();
+      const fromDetail = this.panel === 'playlist';
       await fetch('/api/playlists/' + id, { method: 'DELETE' });
+      this.currentPlaylist = null;
       await this.refreshPlaylists();
+      this.panel = 'playlists';
+      this.addTrackPaths = fromDetail ? [] : pending;
     },
     closePanel() {
       this.panel = null;
-      this.addTrackPath = '';
+      this.addTrackPaths = [];
+      this.currentPlaylist = null;
     },
     fmt(seconds) {
       seconds = Math.max(0, Math.floor(Number(seconds) || 0));

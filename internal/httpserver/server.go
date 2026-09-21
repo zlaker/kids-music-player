@@ -59,9 +59,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/history", s.handleHistoryClear)
 	mux.HandleFunc("GET /api/playlists", s.handlePlaylistsGet)
 	mux.HandleFunc("POST /api/playlists", s.handlePlaylistsCreate)
+	mux.HandleFunc("GET /api/playlists/{id}", s.handlePlaylistGet)
 	mux.HandleFunc("PUT /api/playlists/{id}", s.handlePlaylistUpdate)
 	mux.HandleFunc("DELETE /api/playlists/{id}", s.handlePlaylistDelete)
 	mux.HandleFunc("POST /api/playlists/{id}/play", s.handlePlaylistPlay)
+	mux.HandleFunc("POST /api/playlists/{id}/tracks", s.handlePlaylistAddTracks)
+	mux.HandleFunc("DELETE /api/playlists/{id}/tracks/{path...}", s.handlePlaylistRemoveTrack)
 
 	return recoverer(s.logger, requestLog(s.logger, mux))
 }
@@ -220,7 +223,7 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case req.PlaylistID != "":
-		s.playPlaylist(w, req.PlaylistID)
+		s.playPlaylist(w, req.PlaylistID, req.Path)
 	case req.Folder != "" && req.Path == "":
 		s.playFolder(w, req.Folder, "")
 	case req.Path != "":
@@ -251,7 +254,7 @@ func (s *Server) playFolder(w http.ResponseWriter, folder, start string) {
 	s.startQueue(w, queue, start, "folder:"+folder)
 }
 
-func (s *Server) playPlaylist(w http.ResponseWriter, id string) {
+func (s *Server) playPlaylist(w http.ResponseWriter, id, start string) {
 	pl, ok := s.store.Playlist(id)
 	if !ok {
 		s.respondError(w, http.StatusNotFound, "плейлист не найден")
@@ -268,7 +271,7 @@ func (s *Server) playPlaylist(w http.ResponseWriter, id string) {
 		s.respondError(w, http.StatusNotFound, "в плейлисте нет доступных треков")
 		return
 	}
-	s.startQueue(w, queue, "", "playlist:"+id)
+	s.startQueue(w, queue, start, "playlist:"+id)
 }
 
 func (s *Server) startQueue(w http.ResponseWriter, queue []string, prefer, source string) {
@@ -372,20 +375,28 @@ func (s *Server) handlePlaylistsGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePlaylistsCreate(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeJSON[struct {
-		Name   string   `json:"name"`
-		Tracks []string `json:"tracks"`
+		Name string `json:"name"`
 	}](r)
 	if err != nil || strings.TrimSpace(req.Name) == "" {
 		s.respondError(w, http.StatusBadRequest, "нужно имя плейлиста")
 		return
 	}
-	pl, err := s.store.CreatePlaylist(strings.TrimSpace(req.Name), req.Tracks)
+	pl, err := s.store.CreatePlaylist(strings.TrimSpace(req.Name))
 	if err != nil {
 		s.logger.Error("create playlist", slog.Any("err", err))
 		s.respondError(w, http.StatusInternalServerError, "не удалось создать плейлист")
 		return
 	}
-	s.respondJSON(w, http.StatusCreated, pl)
+	s.respondJSON(w, http.StatusCreated, s.playlistPayload(pl))
+}
+
+func (s *Server) handlePlaylistGet(w http.ResponseWriter, r *http.Request) {
+	pl, ok := s.store.Playlist(r.PathValue("id"))
+	if !ok {
+		s.respondError(w, http.StatusNotFound, "плейлист не найден")
+		return
+	}
+	s.respondJSON(w, http.StatusOK, s.playlistPayload(pl))
 }
 
 func (s *Server) handlePlaylistUpdate(w http.ResponseWriter, r *http.Request) {
@@ -402,7 +413,7 @@ func (s *Server) handlePlaylistUpdate(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusNotFound, "плейлист не найден")
 		return
 	}
-	s.respondJSON(w, http.StatusOK, pl)
+	s.respondJSON(w, http.StatusOK, s.playlistPayload(pl))
 }
 
 func (s *Server) handlePlaylistDelete(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +425,137 @@ func (s *Server) handlePlaylistDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePlaylistPlay(w http.ResponseWriter, r *http.Request) {
-	s.playPlaylist(w, r.PathValue("id"))
+	req, err := decodeJSON[struct {
+		Path string `json:"path"`
+	}](r)
+	start := ""
+	if err == nil {
+		start = req.Path
+	}
+	s.playPlaylist(w, r.PathValue("id"), start)
+}
+
+func (s *Server) handlePlaylistAddTracks(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		Path  string   `json:"path"`
+		Paths []string `json:"paths"`
+	}](r)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "некорректный запрос")
+		return
+	}
+	paths := append([]string(nil), req.Paths...)
+	if req.Path != "" {
+		paths = append(paths, req.Path)
+	}
+	if len(paths) == 0 {
+		s.respondError(w, http.StatusBadRequest, "укажите треки")
+		return
+	}
+	cleaned := make([]string, 0, len(paths))
+	for _, rel := range paths {
+		name, err := s.resolveTrack(rel)
+		if err != nil {
+			s.libraryError(w, err)
+			return
+		}
+		cleaned = append(cleaned, name)
+	}
+	pl, err := s.store.AddTracks(r.PathValue("id"), cleaned)
+	if err != nil {
+		if errors.Is(err, store.ErrPlaylistNotFound) {
+			s.respondError(w, http.StatusNotFound, "плейлист не найден")
+			return
+		}
+		s.logger.Error("add playlist tracks", slog.Any("err", err))
+		s.respondError(w, http.StatusInternalServerError, "не удалось добавить треки")
+		return
+	}
+	s.respondJSON(w, http.StatusOK, s.playlistPayload(pl))
+}
+
+func (s *Server) handlePlaylistRemoveTrack(w http.ResponseWriter, r *http.Request) {
+	rel, err := library.Normalize(r.PathValue("path"))
+	if err != nil || rel == "" {
+		s.respondError(w, http.StatusBadRequest, "некорректный путь")
+		return
+	}
+	pl, err := s.store.RemoveTrack(r.PathValue("id"), rel)
+	if err != nil {
+		if errors.Is(err, store.ErrPlaylistNotFound) {
+			s.respondError(w, http.StatusNotFound, "плейлист не найден")
+			return
+		}
+		if errors.Is(err, store.ErrTrackNotFound) {
+			s.respondError(w, http.StatusNotFound, "трек не найден")
+			return
+		}
+		s.logger.Error("remove playlist track", slog.Any("err", err))
+		s.respondError(w, http.StatusInternalServerError, "не удалось убрать трек")
+		return
+	}
+	s.respondJSON(w, http.StatusOK, s.playlistPayload(pl))
+}
+
+type playlistTrack struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Type     string `json:"type"`
+	Title    string `json:"title,omitempty"`
+	Artist   string `json:"artist,omitempty"`
+	Album    string `json:"album,omitempty"`
+	HasCover bool   `json:"hasCover"`
+	Played   bool   `json:"played"`
+	Missing  bool   `json:"missing,omitempty"`
+}
+
+func (s *Server) playlistPayload(pl store.Playlist) map[string]any {
+	played := s.store.HistorySet()
+	tracks := make([]playlistTrack, 0, len(pl.Tracks))
+	for _, rel := range pl.Tracks {
+		it := playlistTrack{
+			Name: path.Base(rel),
+			Path: rel,
+			Type: "track",
+		}
+		info, err := s.lib.Stat(rel)
+		if err != nil || info.IsDir() {
+			it.Title = strings.TrimSuffix(it.Name, path.Ext(it.Name))
+			it.Missing = true
+			tracks = append(tracks, it)
+			continue
+		}
+		tags := s.meta.For(rel)
+		it.Title = tags.Title
+		it.Artist = tags.Artist
+		it.Album = tags.Album
+		it.HasCover = tags.HasCover
+		_, it.Played = played[rel]
+		tracks = append(tracks, it)
+	}
+	return map[string]any{
+		"id":     pl.ID,
+		"name":   pl.Name,
+		"tracks": tracks,
+	}
+}
+
+func (s *Server) resolveTrack(rel string) (string, error) {
+	name, err := library.Normalize(rel)
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		return "", library.ErrInvalidPath
+	}
+	info, err := s.lib.Stat(name)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() || !strings.EqualFold(path.Ext(name), ".mp3") {
+		return "", library.ErrInvalidPath
+	}
+	return name, nil
 }
 
 func (s *Server) trackOf(rel string) player.Track {

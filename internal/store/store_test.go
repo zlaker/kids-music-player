@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -19,7 +20,14 @@ func TestHistoryAndPlaylistRoundTrip(t *testing.T) {
 		t.Fatalf("history = %#v", got)
 	}
 
-	pl, err := s.CreatePlaylist("Сказки", []string{"a.mp3", "b.mp3"})
+	pl, err := s.CreatePlaylist("Сказки")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pl.Tracks) != 0 {
+		t.Fatalf("new playlist must be empty, got %#v", pl.Tracks)
+	}
+	pl, err = s.AddTracks(pl.ID, []string{"a.mp3", "b.mp3"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,5 +49,52 @@ func TestHistoryAndPlaylistRoundTrip(t *testing.T) {
 	}
 	if _, ok := s.Playlist(pl.ID); ok {
 		t.Fatal("playlist still there")
+	}
+}
+
+func TestPlaylistAddRemove(t *testing.T) {
+	t.Parallel()
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pl, err := s.CreatePlaylist("Вечер")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.AddTracks(pl.ID, []string{"a.mp3", "a.mp3", "b.mp3", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tracks) != 2 || got.Tracks[0] != "a.mp3" || got.Tracks[1] != "b.mp3" {
+		t.Fatalf("tracks after add = %#v", got.Tracks)
+	}
+
+	got, err = s.RemoveTrack(pl.ID, "a.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tracks) != 1 || got.Tracks[0] != "b.mp3" {
+		t.Fatalf("tracks after remove = %#v", got.Tracks)
+	}
+
+	if _, err := s.RemoveTrack(pl.ID, "missing.mp3"); !errors.Is(err, ErrTrackNotFound) {
+		t.Fatalf("missing track err = %v", err)
+	}
+	if _, err := s.AddTracks("nope", []string{"a.mp3"}); !errors.Is(err, ErrPlaylistNotFound) {
+		t.Fatalf("missing playlist add err = %v", err)
+	}
+	if _, err := s.RemoveTrack("nope", "a.mp3"); !errors.Is(err, ErrPlaylistNotFound) {
+		t.Fatalf("missing playlist remove err = %v", err)
+	}
+
+	got, err = s.RemoveTrack(pl.ID, "b.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tracks == nil || len(got.Tracks) != 0 {
+		t.Fatalf("empty playlist tracks = %#v", got.Tracks)
 	}
 }
