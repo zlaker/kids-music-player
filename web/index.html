@@ -2,85 +2,63 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Детский плеер</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: { sans: ['Nunito', 'system-ui', 'sans-serif'] },
-          colors: {
-            cream: '#fff4e6',
-            ink: '#3d2a1c',
-            peach: '#ff7a45',
-            grape: '#7b61ff',
-          }
-        }
-      }
-    }
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800&display=swap" rel="stylesheet">
-  <style>
-    [x-cloak] { display: none !important; }
-    input[type=range] { accent-color: #ff7a45; }
-  </style>
+  <link rel="stylesheet" href="/app.css">
 </head>
-<body class="bg-cream text-ink font-sans min-h-screen pb-56">
+<body>
   <div x-data="playerApp()" x-init="init()" x-cloak>
-    <button x-show="needsUnlock" @click="unlock()" class="fixed inset-0 z-40 bg-ink/50 text-white text-2xl font-extrabold">
+    <button x-show="needsUnlock" @click="unlock()" class="unlock">
       Нажмите, чтобы включить звук
     </button>
-    <header class="sticky top-0 z-20 bg-cream/90 backdrop-blur border-b border-orange-100">
-      <div class="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center gap-2">
-        <button @click="open('')" class="text-2xl font-extrabold tracking-tight mr-auto">Музыка</button>
-        <button @click="panel = 'timer'" class="min-h-12 px-3 sm:px-4 rounded-2xl bg-white shadow-sm font-extrabold">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <button @click="open('')" class="brand">Музыка</button>
+        <button @click="panel = 'timer'" class="bar-btn">
           <span x-show="!sleepLeft">Таймер</span>
           <span x-show="sleepLeft" x-text="'Таймер ' + sleepLeft"></span>
         </button>
-        <button @click="openHistory()" class="min-h-12 px-3 sm:px-4 rounded-2xl bg-white shadow-sm font-extrabold">История</button>
-        <button @click="toggleRandom()" class="min-h-12 px-3 sm:px-4 rounded-2xl shadow-sm font-extrabold" :class="player.random ? 'bg-grape text-white' : 'bg-white'">Случайно</button>
-        <button @click="openPlaylists()" class="min-h-12 px-3 sm:px-4 rounded-2xl bg-white shadow-sm font-extrabold">Плейлисты</button>
+        <button @click="openHistory()" class="bar-btn">История</button>
+        <button @click="toggleRandom()" class="bar-btn" :class="player.random ? 'on' : ''">Случайно</button>
+        <button @click="openPlaylists()" class="bar-btn">Плейлисты</button>
       </div>
     </header>
 
-    <main class="max-w-5xl mx-auto px-4 py-6">
-      <nav class="flex flex-wrap items-center gap-2 text-lg font-extrabold mb-6">
-        <button @click="open('')" class="text-peach">Все альбомы</button>
+    <main class="wrap">
+      <nav class="crumbs">
+        <button @click="open('')" class="peach-text">Все альбомы</button>
         <template x-for="crumb in crumbs" :key="crumb.path">
-          <span class="flex items-center gap-2">
-            <span class="text-orange-200">/</span>
+          <span class="row">
+            <span class="sep">/</span>
             <button @click="open(crumb.path)" x-text="crumb.name"></button>
           </span>
         </template>
       </nav>
 
-      <div x-show="notice" class="mb-4 p-4 rounded-2xl bg-orange-100 font-extrabold" x-text="notice"></div>
-      <div x-show="loading" class="text-xl font-extrabold text-orange-300">Загрузка…</div>
-      <div x-show="!loading && folders.length === 0 && tracks.length === 0" class="text-xl font-extrabold">В этой папке нет mp3.</div>
+      <div x-show="notice" class="notice" x-text="notice"></div>
+      <div x-show="loading" class="muted">Загрузка…</div>
+      <div x-show="!loading && folders.length === 0 && tracks.length === 0" class="muted">В этой папке нет mp3.</div>
 
-      <section x-show="folders.length" class="mb-10">
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+      <section x-show="folders.length">
+        <div class="album-grid">
           <template x-for="item in folders" :key="item.path">
-            <button @click="open(item.path)" class="group text-left bg-white rounded-3xl p-3 shadow-sm min-h-28">
-              <div class="aspect-square rounded-2xl overflow-hidden bg-orange-50 mb-3">
-                <img x-show="item.hasCover" :src="coverUrl(item.path)" :alt="item.name" class="w-full h-full object-cover">
-                <div x-show="!item.hasCover" class="w-full h-full grid place-items-center text-4xl bg-gradient-to-br from-orange-100 to-purple-100">📁</div>
+            <button @click="open(item.path)" class="album">
+              <div class="cover-lg">
+                <img x-show="item.hasCover" :src="coverUrl(item.path)" :alt="item.name">
+                <div x-show="!item.hasCover" class="ph">📁</div>
               </div>
-              <div class="font-extrabold leading-tight" x-text="item.name"></div>
+              <div x-text="item.name"></div>
             </button>
           </template>
         </div>
       </section>
 
       <section x-show="tracks.length">
-        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <h2 class="text-xl font-extrabold">Треки</h2>
-          <div class="flex flex-wrap gap-2">
-            <button @click="playFolder()" class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Играть папку</button>
-            <button @click="createPlaylistFromFolder()" class="min-h-12 px-4 rounded-2xl bg-white shadow-sm font-extrabold">В плейлист</button>
+        <div class="track-head">
+          <h2>Треки</h2>
+          <div class="row">
+            <button @click="playFolder()" class="bar-btn peach">Играть папку</button>
+            <button @click="createPlaylistFromFolder()" class="bar-btn">В плейлист</button>
           </div>
         </div>
         <input
@@ -88,54 +66,58 @@
           x-model="query"
           @keydown.enter.prevent="playFirstMatch()"
           placeholder="Найти трек в этой папке"
-          class="w-full min-h-14 mb-3 px-4 rounded-2xl bg-white shadow-sm font-extrabold text-lg outline-none focus:ring-4 focus:ring-orange-200"
+          class="search"
         >
-        <p x-show="query.trim() && visibleTracks.length === 0" class="mb-3 font-extrabold text-orange-400">Ничего не найдено</p>
-        <div class="space-y-2">
+        <p x-show="query.trim() && visibleTracks.length === 0" class="muted">Ничего не найдено</p>
+        <div class="track-list">
           <template x-for="item in visibleTracks" :key="item.path">
-            <div class="flex items-center gap-3 bg-white rounded-3xl p-3 shadow-sm" :class="(player.track && player.track.path === item.path ? 'ring-4 ring-orange-200 ' : '') + (item.played ? 'opacity-45' : '')">
-              <button @click="playTrack(item.path)" class="flex flex-1 items-center gap-3 min-h-16 text-left">
-                <div class="w-16 h-16 rounded-2xl overflow-hidden bg-orange-50 shrink-0">
-                  <img x-show="item.hasCover" :src="coverUrl(item.path)" class="w-full h-full object-cover" alt="">
-                  <div x-show="!item.hasCover" class="w-full h-full grid place-items-center text-2xl">🎵</div>
+            <div class="track" :class="(player.track && player.track.path === item.path ? 'current ' : '') + (item.played ? 'played' : '')">
+              <button @click="playTrack(item.path)" class="track-play">
+                <div class="cover">
+                  <img x-show="item.hasCover" :src="coverUrl(item.path)" alt="">
+                  <div x-show="!item.hasCover" class="ph">🎵</div>
                 </div>
-                <div>
-                  <div class="font-extrabold text-lg leading-tight" x-text="item.title || item.name"></div>
-                  <div class="text-orange-400 font-bold" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
+                <div class="titles">
+                  <div class="title" x-text="item.title || item.name"></div>
+                  <div class="sub" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
                 </div>
               </button>
-              <button @click="startAddTracks([item.path])" class="min-h-12 min-w-12 rounded-2xl bg-cream font-extrabold">+</button>
+              <button @click="startAddTracks([item.path])" class="icon-btn">+</button>
             </div>
           </template>
         </div>
       </section>
     </main>
 
-    <div x-show="panel" class="fixed inset-0 z-30 bg-ink/30" @click.self="closePanel()">
-      <div class="absolute right-0 top-0 h-full w-full max-w-md bg-cream shadow-2xl p-5 overflow-y-auto">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-2xl font-extrabold" x-text="panelTitle"></h2>
-          <button @click="closePanel()" class="min-h-12 min-w-12 rounded-2xl bg-white font-extrabold">✕</button>
+    <div x-show="panel" class="panel-back" @click.self="closePanel()">
+      <div class="panel">
+        <div class="panel-head">
+          <h2 x-text="panelTitle"></h2>
+          <button @click="closePanel()" class="icon-btn">✕</button>
         </div>
 
         <template x-if="panel === 'timer'">
-          <div class="space-y-3">
+          <div class="stack">
             <template x-for="m in [15, 20, 30, 45, 60]" :key="m">
-              <button @click="setTimer(m)" class="w-full min-h-14 rounded-2xl bg-white font-extrabold text-xl" x-text="m + ' минут'"></button>
+              <button @click="setTimer(m)" class="wide" x-text="m + ' минут'"></button>
             </template>
-            <button @click="setTimer(0)" class="w-full min-h-14 rounded-2xl bg-peach text-white font-extrabold text-xl">Выключить таймер</button>
+            <button @click="setTimer(0)" class="wide peach">Выключить таймер</button>
           </div>
         </template>
 
         <template x-if="panel === 'history'">
           <div>
-            <button @click="clearHistory()" class="w-full min-h-12 mb-4 rounded-2xl bg-white font-extrabold">Очистить историю</button>
-            <div x-show="history.length === 0" class="font-extrabold text-orange-300">Пока пусто</div>
-            <div class="space-y-2">
+            <div class="row" style="margin-bottom: 1rem">
+              <button x-show="!confirmClear" @click="confirmClear = true" class="wide">Очистить историю</button>
+              <button x-show="confirmClear" @click="clearHistory()" class="wide peach">Точно очистить</button>
+              <button x-show="confirmClear" @click="confirmClear = false" class="wide">Отмена</button>
+            </div>
+            <div x-show="history.length === 0" class="muted">Пока пусто</div>
+            <div class="stack">
               <template x-for="item in history" :key="item.playedAt + item.path">
-                <button @click="playTrack(item.path); closePanel()" class="w-full text-left bg-white rounded-2xl p-3">
-                  <div class="font-extrabold" x-text="item.title || item.path"></div>
-                  <div class="text-orange-400 font-bold" x-text="item.artist"></div>
+                <button @click="playTrack(item.path); closePanel()" class="history-item">
+                  <div x-text="item.title || item.path"></div>
+                  <div class="sub" x-text="item.artist"></div>
                 </button>
               </template>
             </div>
@@ -144,24 +126,24 @@
 
         <template x-if="panel === 'playlists'">
           <div>
-            <form @submit.prevent="createPlaylist()" class="flex gap-2 mb-4">
-              <input x-model="playlistName" placeholder="Новый плейлист" class="flex-1 min-h-12 rounded-2xl px-4 font-bold">
-              <button class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Создать</button>
+            <form @submit.prevent="createPlaylist()" class="form-row">
+              <input x-model="playlistName" placeholder="Новый плейлист">
+              <button class="bar-btn peach">Создать</button>
             </form>
-            <p x-show="addTrackPaths.length" class="mb-3 font-extrabold text-orange-400">Выберите плейлист</p>
-            <div x-show="playlists.length === 0" class="font-extrabold text-orange-300">Плейлистов нет</div>
-            <div class="space-y-3">
+            <p x-show="addTrackPaths.length" class="muted">Выберите плейлист</p>
+            <div x-show="playlists.length === 0" class="muted">Плейлистов нет</div>
+            <div class="stack">
               <template x-for="pl in playlists" :key="pl.id">
-                <div class="bg-white rounded-2xl p-3">
-                  <button @click="addTrackPaths.length ? addToPlaylist(pl) : openPlaylist(pl.id)" class="w-full text-left">
-                    <div class="font-extrabold text-lg" x-text="pl.name"></div>
-                    <div class="text-orange-400 font-bold mb-2" x-text="(pl.tracks ? pl.tracks.length : 0) + ' треков'"></div>
-                  </button>
-                  <div class="flex flex-wrap gap-2">
-                    <button x-show="addTrackPaths.length" @click="addToPlaylist(pl)" class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Добавить</button>
-                    <button x-show="!addTrackPaths.length" @click="openPlaylist(pl.id)" class="min-h-12 px-4 rounded-2xl bg-cream font-extrabold">Открыть</button>
-                    <button x-show="!addTrackPaths.length" @click="playPlaylist(pl.id); closePanel()" class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold">Играть</button>
-                    <button @click="deletePlaylist(pl.id)" class="min-h-12 px-4 rounded-2xl bg-cream font-extrabold">Удалить</button>
+                <div class="playlist">
+                  <div x-text="pl.name"></div>
+                  <div class="sub" x-text="(pl.tracks ? pl.tracks.length : 0) + ' треков'"></div>
+                  <div class="row">
+                    <button x-show="addTrackPaths.length" @click="addToPlaylist(pl)" class="bar-btn peach">Добавить</button>
+                    <button x-show="!addTrackPaths.length" @click="openPlaylist(pl.id)" class="bar-btn">Открыть</button>
+                    <button x-show="!addTrackPaths.length" @click="playPlaylist(pl.id); closePanel()" class="bar-btn peach">Играть</button>
+                    <button x-show="confirmDeleteId !== pl.id" @click="confirmDeleteId = pl.id" class="bar-btn">Удалить</button>
+                    <button x-show="confirmDeleteId === pl.id" @click="deletePlaylist(pl.id)" class="bar-btn peach">Точно удалить</button>
+                    <button x-show="confirmDeleteId === pl.id" @click="confirmDeleteId = ''" class="bar-btn">Отмена</button>
                   </div>
                 </div>
               </template>
@@ -171,32 +153,34 @@
 
         <template x-if="panel === 'playlist' && currentPlaylist">
           <div>
-            <button @click="openPlaylists()" class="w-full min-h-12 mb-4 rounded-2xl bg-white font-extrabold">← К плейлистам</button>
-            <div class="flex flex-wrap gap-2 mb-4">
+            <button @click="openPlaylists()" class="wide">← К плейлистам</button>
+            <div class="row" style="margin: 1rem 0">
               <button
                 x-show="currentPlaylist.tracks && currentPlaylist.tracks.length"
                 @click="playPlaylist(currentPlaylist.id); closePanel()"
-                class="min-h-12 px-4 rounded-2xl bg-peach text-white font-extrabold"
+                class="bar-btn peach"
               >Играть</button>
-              <button @click="deletePlaylist(currentPlaylist.id)" class="min-h-12 px-4 rounded-2xl bg-cream font-extrabold">Удалить</button>
+              <button x-show="confirmDeleteId !== currentPlaylist.id" @click="confirmDeleteId = currentPlaylist.id" class="bar-btn">Удалить</button>
+              <button x-show="confirmDeleteId === currentPlaylist.id" @click="deletePlaylist(currentPlaylist.id)" class="bar-btn peach">Точно удалить</button>
+              <button x-show="confirmDeleteId === currentPlaylist.id" @click="confirmDeleteId = ''" class="bar-btn">Отмена</button>
             </div>
-            <div x-show="!currentPlaylist.tracks || currentPlaylist.tracks.length === 0" class="font-extrabold text-orange-300">
+            <div x-show="!currentPlaylist.tracks || currentPlaylist.tracks.length === 0" class="muted">
               Пока нет треков. Нажмите + у песни.
             </div>
-            <div class="space-y-2">
+            <div class="track-list">
               <template x-for="item in (currentPlaylist.tracks || [])" :key="item.path">
-                <div class="flex items-center gap-3 bg-white rounded-3xl p-3 shadow-sm" :class="(player.track && player.track.path === item.path ? 'ring-4 ring-orange-200 ' : '') + (item.played ? 'opacity-45' : '')">
-                  <button @click="playPlaylist(currentPlaylist.id, item.path); closePanel()" class="flex flex-1 items-center gap-3 min-h-16 text-left">
-                    <div class="w-16 h-16 rounded-2xl overflow-hidden bg-orange-50 shrink-0">
-                      <img x-show="item.hasCover" :src="coverUrl(item.path)" class="w-full h-full object-cover" alt="">
-                      <div x-show="!item.hasCover" class="w-full h-full grid place-items-center text-2xl">🎵</div>
+                <div class="track" :class="(player.track && player.track.path === item.path ? 'current ' : '') + (item.played ? 'played' : '')">
+                  <button @click="playPlaylist(currentPlaylist.id, item.path); closePanel()" class="track-play">
+                    <div class="cover">
+                      <img x-show="item.hasCover" :src="coverUrl(item.path)" alt="">
+                      <div x-show="!item.hasCover" class="ph">🎵</div>
                     </div>
-                    <div>
-                      <div class="font-extrabold text-lg leading-tight" x-text="item.title || item.name || item.path"></div>
-                      <div class="text-orange-400 font-bold" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
+                    <div class="titles">
+                      <div class="title" x-text="item.title || item.name || item.path"></div>
+                      <div class="sub" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
                     </div>
                   </button>
-                  <button @click="removeFromPlaylist(item.path)" class="min-h-12 min-w-12 rounded-2xl bg-cream font-extrabold">−</button>
+                  <button @click="removeFromPlaylist(item.path)" class="icon-btn">−</button>
                 </div>
               </template>
             </div>
@@ -205,33 +189,38 @@
       </div>
     </div>
 
-    <footer class="fixed bottom-0 inset-x-0 z-20 bg-white/95 backdrop-blur border-t border-orange-100">
-      <div class="max-w-5xl mx-auto px-4 py-3 space-y-2">
-        <div class="flex items-center gap-3">
-          <div class="w-14 h-14 rounded-2xl overflow-hidden bg-orange-50 shrink-0">
-            <img x-show="player.track" :src="player.track ? coverUrl(player.track.path) : ''" class="w-full h-full object-cover" alt="" @error="$el.style.display='none'">
+    <footer class="player-bar">
+      <div class="player-inner">
+        <div class="player-main">
+          <div class="cover">
+            <img x-show="player.track && !coverBroken" :src="player.track ? coverUrl(player.track.path) : ''" alt="" @error="coverBroken = true">
+            <div x-show="!player.track || coverBroken" class="ph">🎵</div>
           </div>
-          <div class="min-w-0 flex-1">
-            <div class="font-extrabold truncate" x-text="player.track ? player.track.title : 'Ничего не играет'"></div>
-            <div class="text-orange-400 font-bold truncate" x-text="player.track ? [player.track.artist, player.track.album].filter(Boolean).join(' · ') : 'Выберите трек'"></div>
+          <div class="titles">
+            <div class="title" x-text="player.track ? player.track.title : 'Ничего не играет'"></div>
+            <div class="sub" x-text="player.track ? [player.track.artist, player.track.album].filter(Boolean).join(' · ') : 'Выберите трек'"></div>
           </div>
-          <div class="flex items-center gap-2 shrink-0">
-            <button @click="prev()" class="min-h-12 min-w-12 rounded-2xl bg-cream text-xl font-extrabold">⏮</button>
-            <button @click="toggle()" class="min-h-12 min-w-12 rounded-2xl bg-peach text-white text-xl font-extrabold" x-text="player.playing ? '⏸' : '▶'"></button>
-            <button @click="next()" class="min-h-12 min-w-12 rounded-2xl bg-cream text-xl font-extrabold">⏭</button>
+          <div class="transport">
+            <button @click="prev()">⏮</button>
+            <button @click="toggle()" class="peach" x-text="player.playing ? '⏸' : '▶'"></button>
+            <button @click="next()">⏭</button>
           </div>
         </div>
-        <div class="flex items-center gap-3">
-          <span class="w-10 font-extrabold text-sm" x-text="fmt(localPosition)"></span>
-          <input type="range" min="0" :max="duration || 0" step="0.1" :value="localPosition" @input="seek($event.target.value)" class="flex-1">
-          <span class="w-10 text-right font-extrabold text-sm" x-text="fmt(duration)"></span>
+        <div class="seek-row">
+          <span class="time" x-text="fmt(localPosition)"></span>
+          <input type="range" min="0" :max="duration || 0" step="0.1" :value="localPosition" @input="seek($event.target.value)">
+          <span class="time end" x-text="fmt(duration)"></span>
+        </div>
+        <div class="volume-row">
+          <span class="vol-label">Громкость</span>
+          <input type="range" min="0" max="1" step="0.05" :value="volume" @input="setVolume($event.target.value)">
         </div>
       </div>
     </footer>
 
-    <audio x-ref="audio" preload="metadata" @timeupdate="onTime()" @ended="next()" @loadedmetadata="duration = $refs.audio.duration || 0"></audio>
+    <audio x-ref="audio" preload="metadata" playsinline webkit-playsinline @timeupdate="onTime()" @ended="onEnded()" @error="onAudioError()" @loadedmetadata="duration = $refs.audio.duration || 0"></audio>
   </div>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+  <script defer src="/alpine.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

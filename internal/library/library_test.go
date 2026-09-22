@@ -1,6 +1,7 @@
 package library
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,5 +67,27 @@ func TestOpenRejectsEscape(t *testing.T) {
 	t.Cleanup(func() { _ = lib.Close() })
 	if _, err := lib.Open("../passwd"); err == nil {
 		t.Fatal("escaped root")
+	}
+}
+
+func TestOpenRejectsSymlinkEscape(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.mp3"), []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.mp3"), filepath.Join(root, "link.mp3")); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lib.Close() })
+	// A rejected symlink must be reported as a bad path so callers answer 400,
+	// not as an unknown failure that turns into a 500.
+	if _, err := lib.Open("link.mp3"); !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("symlink escape err = %v, want ErrInvalidPath", err)
 	}
 }

@@ -1,11 +1,13 @@
 package httpserver
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +80,21 @@ func TestLibraryAndTraversal(t *testing.T) {
 	}
 }
 
+func TestPlayAcceptsFolderAsPath(t *testing.T) {
+	s, _ := testServer(t)
+	h := s.Handler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/player/play", strings.NewReader(`{"path":"Альбом"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("play album by path: status %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Альбом/") {
+		t.Fatalf("no track from the album started: %s", rec.Body.String())
+	}
+}
+
 func TestPlayAndHistory(t *testing.T) {
 	s, _ := testServer(t)
 	s.player.OnStart = func(track player.Track) {
@@ -114,6 +131,128 @@ func TestPlayAndHistory(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Альбом/two.mp3") {
 		t.Fatalf("expected remaining track, got %s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/player/play", strings.NewReader(`{"path":"Альбом/one.mp3"}`))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"path":"Альбом/one.mp3"`) {
+		t.Fatalf("explicit replay status %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPrevAtStartDoesNotStop(t *testing.T) {
+	s, _ := testServer(t)
+	s.player.SetRandom(false)
+	h := s.Handler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/player/play", strings.NewReader(`{"path":"Альбом/one.mp3"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("play %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/player/prev", strings.NewReader(`{"path":"Альбом/one.mp3"}`))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("prev status %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "в эту сторону") {
+		t.Fatalf("prev body %s", rec.Body.String())
+	}
+	if !s.player.Snapshot().Playing {
+		t.Fatal("prev at start stopped playback")
+	}
+}
+
+func TestStreamMP3AndRange(t *testing.T) {
+	s, root := testServer(t)
+	h := s.Handler()
+
+	notes := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(notes, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/stream/notes.txt", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("non-mp3 status %d %s", rec.Code, rec.Body.String())
+	}
+
+	body := []byte("0123456789abcdef")
+	if err := os.WriteFile(filepath.Join(root, "Альбом", "one.mp3"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/stream/"+url.PathEscape("Альбом")+"/one.mp3", nil)
+	req.Header.Set("Range", "bytes=0-3")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("range status %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "0123" {
+		t.Fatalf("range body %q", rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Range"); got != "bytes 0-3/16" {
+		t.Fatalf("content-range %q", got)
+	}
+}
+
+func TestStreamFullBodyOverTCP(t *testing.T) {
+	s, root := testServer(t)
+	body := bytes.Repeat([]byte("abcdefgh"), 200)
+	if err := os.WriteFile(filepath.Join(root, "Альбом", "one.mp3"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	res, err := http.Get(srv.URL + "/api/stream/" + url.PathEscape("Альбом") + "/one.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	got, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(body) || string(got) != string(body) {
+		t.Fatalf("body len %d, want %d", len(got), len(body))
+	}
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/stream/"+url.PathEscape("Альбом")+"/one.mp3", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Range", "bytes=10-19")
+	res2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := res2.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if res2.StatusCode != http.StatusPartialContent {
+		t.Fatalf("range status %d", res2.StatusCode)
+	}
+	part, err := io.ReadAll(res2.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(part) != string(body[10:20]) {
+		t.Fatalf("range body %q", part)
 	}
 }
 

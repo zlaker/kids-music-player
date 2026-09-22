@@ -29,7 +29,11 @@ func Run(ctx context.Context, logger *slog.Logger, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer lib.Close()
+	defer func() {
+		if err := lib.Close(); err != nil {
+			logger.Error("close library", slog.Any("err", err))
+		}
+	}()
 
 	stateDir := cfg.StateDir
 	if stateDir == "" {

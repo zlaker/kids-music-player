@@ -89,18 +89,29 @@ func (l *Library) Open(rel string) (*os.File, error) {
 		if os.IsNotExist(err) {
 			return nil, ErrNotFound
 		}
+		// os.Root refuses to follow a link out of the music directory and
+		// reports it with an unexported error. The name exists yet cannot be
+		// opened inside the root, so treat it as a bad path, not a server
+		// fault: a stray symlink must not turn requests into 500s.
+		if _, lerr := l.root.Lstat(name); lerr == nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidPath, name)
+		}
 		return nil, fmt.Errorf("open %s: %w", name, err)
 	}
 	return f, nil
 }
 
-func (l *Library) Stat(rel string) (fs.FileInfo, error) {
+func (l *Library) Stat(rel string) (info fs.FileInfo, err error) {
 	f, err := l.Open(rel)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	info, err := f.Stat()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close %s: %w", rel, cerr)
+		}
+	}()
+	info, err = f.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", rel, err)
 	}
@@ -116,7 +127,11 @@ func (l *Library) List(rel string) (parent string, entries []Entry, err error) {
 	if err != nil {
 		return "", nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close listing: %w", cerr)
+		}
+	}()
 
 	info, err := f.Stat()
 	if err != nil {

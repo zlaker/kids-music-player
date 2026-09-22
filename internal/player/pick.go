@@ -2,20 +2,29 @@ package player
 
 import "math/rand/v2"
 
-// ChooseStart picks the first track: preferred path if it is still unplayed,
-// otherwise a random or first unplayed item.
+// ChooseStart picks the first track. An explicit prefer always wins when it
+// is in the queue, including tracks already in history. Automatic choice
+// (empty prefer) skips history until it is cleared.
 func ChooseStart(queue []string, prefer string, skip map[string]struct{}, random bool) (index int, ok bool) {
 	if prefer != "" {
-		if _, played := skip[prefer]; !played {
-			for i, p := range queue {
-				if p == prefer {
-					return i, true
-				}
+		for i, p := range queue {
+			if p == prefer {
+				return i, true
 			}
 		}
 	}
 	_, index, ok = NextUnplayed(queue, -1, skip, random, 1)
 	return index, ok
+}
+
+// HasUnplayed reports whether any queue path is absent from skip.
+func HasUnplayed(queue []string, skip map[string]struct{}) bool {
+	for _, p := range queue {
+		if _, played := skip[p]; !played {
+			return true
+		}
+	}
+	return false
 }
 
 // NextUnplayed walks the queue skipping paths in skip. dir > 0 goes forward,

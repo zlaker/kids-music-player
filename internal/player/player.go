@@ -1,6 +1,7 @@
 package player
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -13,7 +14,11 @@ type Track struct {
 }
 
 type State struct {
-	Seq        int64      `json:"seq"`
+	Seq int64 `json:"seq"`
+	// SeekSeq changes only when the playhead was moved on purpose: a seek or a
+	// new track. Progress reports leave it alone, so a client that is playing
+	// can tell "someone jumped" from "the server is a second behind me".
+	SeekSeq    int64      `json:"seekSeq"`
 	Track      *Track     `json:"track"`
 	Queue      []string   `json:"queue"`
 	QueueIndex int        `json:"queueIndex"`
@@ -25,12 +30,22 @@ type State struct {
 	Random     bool       `json:"random"`
 }
 
+const (
+	maxSleepMinutes = 180
+	// posGuard is how long after a seek or track change position reports from
+	// other clients are treated as stale.
+	posGuard = 2 * time.Second
+)
+
 type Player struct {
-	mu     sync.Mutex
-	state  State
-	subs   map[int]chan State
-	nextID int
-	timer  *time.Timer
+	mu               sync.Mutex
+	state            State
+	subs             map[int]chan State
+	nextID           int
+	timer            *time.Timer
+	sleepGen         int
+	lastPosBroadcast time.Time
+	posGuardUntil    time.Time
 
 	OnStart func(Track)
 }
@@ -71,11 +86,28 @@ func (p *Player) Subscribe() (<-chan State, func()) {
 }
 
 func (p *Player) PlayQueue(queue []string, index int, track Track, source string) State {
-	started := false
+	st, _ := p.play(queue, index, track, source, "")
+	return st
+}
+
+// PlayIfCurrent starts track only when the current track path is still expectPath.
+// An empty expectPath always applies. The bool is false when a concurrent
+// advance already moved on, so a second next/prev from another tab is ignored.
+func (p *Player) PlayIfCurrent(queue []string, index int, track Track, source, expectPath string) (State, bool) {
+	return p.play(queue, index, track, source, expectPath)
+}
+
+func (p *Player) play(queue []string, index int, track Track, source, expectPath string) (State, bool) {
 	p.mu.Lock()
-	if index < 0 || index >= len(queue) {
+	if expectPath != "" && (p.state.Track == nil || p.state.Track.Path != expectPath) {
+		out := clone(p.state)
 		p.mu.Unlock()
-		return clone(p.state)
+		return out, false
+	}
+	if index < 0 || index >= len(queue) {
+		out := clone(p.state)
+		p.mu.Unlock()
+		return out, false
 	}
 	p.state.Queue = append([]string(nil), queue...)
 	p.state.QueueIndex = index
@@ -83,15 +115,19 @@ func (p *Player) PlayQueue(queue []string, index int, track Track, source string
 	p.state.Playing = true
 	p.state.Position = 0
 	p.state.Source = source
+	p.posGuardUntil = time.Now().Add(posGuard)
+	p.state.SeekSeq++
 	p.bumpLocked()
-	started = true
 	out := clone(p.state)
 	p.mu.Unlock()
-	if started && p.OnStart != nil {
+	// History is written before subscribers are told, so a fast next cannot
+	// skip a track that has not been recorded yet. Clients drop a snapshot
+	// whose seq is older than one they already applied.
+	if p.OnStart != nil {
 		p.OnStart(track)
 	}
 	p.broadcast(out)
-	return out
+	return out, true
 }
 
 func (p *Player) Pause() State {
@@ -122,6 +158,8 @@ func (p *Player) Seek(seconds float64) State {
 	}
 	p.mu.Lock()
 	p.state.Position = seconds
+	p.posGuardUntil = time.Now().Add(posGuard)
+	p.state.SeekSeq++
 	p.bumpLocked()
 	out := clone(p.state)
 	p.mu.Unlock()
@@ -134,11 +172,33 @@ func (p *Player) ReportPosition(path string, seconds float64) {
 		seconds = 0
 	}
 	p.mu.Lock()
-	if p.state.Track != nil && p.state.Track.Path == path {
-		p.state.Position = seconds
-		p.state.UpdatedAt = time.Now()
+	if p.state.Track == nil || p.state.Track.Path != path {
+		p.mu.Unlock()
+		return
 	}
+	// Right after a seek or a track change, another phone is still playing the
+	// old spot and would undo it. Outside that window a big jump forward is
+	// normal: a backgrounded tab keeps playing while its timers are throttled.
+	if time.Now().Before(p.posGuardUntil) && math.Abs(seconds-p.state.Position) > 5 {
+		p.mu.Unlock()
+		return
+	}
+	// A tab lagging behind must not pull the shared playhead backwards.
+	if p.state.Position-seconds > 1.5 {
+		p.mu.Unlock()
+		return
+	}
+	p.state.Position = seconds
+	p.state.UpdatedAt = time.Now()
+	if time.Since(p.lastPosBroadcast) < time.Second {
+		p.mu.Unlock()
+		return
+	}
+	p.lastPosBroadcast = time.Now()
+	p.bumpLocked()
+	out := clone(p.state)
 	p.mu.Unlock()
+	p.broadcast(out)
 }
 
 func (p *Player) Peek(delta int) (path string, index int, ok bool) {
@@ -195,6 +255,8 @@ func (p *Player) SetTrackMeta(track Track) {
 
 func (p *Player) SetSleep(minutes int) State {
 	p.mu.Lock()
+	p.sleepGen++
+	gen := p.sleepGen
 	if p.timer != nil {
 		p.timer.Stop()
 		p.timer = nil
@@ -207,9 +269,12 @@ func (p *Player) SetSleep(minutes int) State {
 		p.broadcast(out)
 		return out
 	}
+	if minutes > maxSleepMinutes {
+		minutes = maxSleepMinutes
+	}
 	until := time.Now().Add(time.Duration(minutes) * time.Minute)
 	p.state.SleepUntil = &until
-	p.timer = time.AfterFunc(time.Until(until), p.sleepFire)
+	p.timer = time.AfterFunc(time.Until(until), func() { p.sleepFire(gen) })
 	p.bumpLocked()
 	out := clone(p.state)
 	p.mu.Unlock()
@@ -217,8 +282,12 @@ func (p *Player) SetSleep(minutes int) State {
 	return out
 }
 
-func (p *Player) sleepFire() {
+func (p *Player) sleepFire(gen int) {
 	p.mu.Lock()
+	if gen != p.sleepGen {
+		p.mu.Unlock()
+		return
+	}
 	p.state.Playing = false
 	p.state.SleepUntil = nil
 	p.timer = nil
@@ -237,9 +306,20 @@ func (p *Player) broadcast(state State) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, ch := range p.subs {
+		msg := clone(state)
 		select {
-		case ch <- clone(state):
+		case ch <- msg:
 		default:
+			// Drop one stale snapshot so the newest state still fits.
+			// The subscriber applies seq and ignores anything older.
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- msg:
+			default:
+			}
 		}
 	}
 }

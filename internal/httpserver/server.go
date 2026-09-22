@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -36,9 +35,13 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.Handle("GET /app.js", staticFile("app.js"))
+	mux.Handle("GET /app.css", staticFile("app.css"))
+	mux.Handle("GET /alpine.min.js", staticFile("alpine.min.js"))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		if _, err := io.WriteString(w, "ok"); err != nil {
+			return
+		}
 	})
 
 	mux.HandleFunc("GET /api/library", s.handleLibrary)
@@ -76,7 +79,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		s.logger.Error("write index", slog.Any("err", err))
+	}
 }
 
 func staticFile(name string) http.Handler {
@@ -144,12 +149,20 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusBadRequest, "это папка")
 		return
 	}
+	if !strings.EqualFold(path.Ext(rel), ".mp3") {
+		s.respondError(w, http.StatusBadRequest, "нужен файл mp3")
+		return
+	}
 	f, err := s.lib.Open(rel)
 	if err != nil {
 		s.libraryError(w, err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			s.logger.Error("close stream", slog.String("path", rel), slog.Any("err", err))
+		}
+	}()
 	w.Header().Set("Content-Type", "audio/mpeg")
 	http.ServeContent(w, r, path.Base(rel), info.ModTime(), f)
 }
@@ -163,7 +176,9 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", cover.MIME)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
-	_, _ = w.Write(cover.Data)
+	if _, err := w.Write(cover.Data); err != nil {
+		return
+	}
 }
 
 func (s *Server) handlePlayerGet(w http.ResponseWriter, r *http.Request) {
@@ -185,14 +200,27 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	ping := time.NewTicker(15 * time.Second)
 	defer ping.Stop()
+	rc := http.NewResponseController(w)
+
+	writeEvent := func(payload string) bool {
+		if err := rc.SetWriteDeadline(time.Now().Add(20 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			s.logger.Error("sse deadline", slog.Any("err", err))
+		}
+		if _, err := io.WriteString(w, payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
-			_, _ = fmt.Fprintf(w, ": ping\n\n")
-			flusher.Flush()
+			if !writeEvent(": ping\n\n") {
+				return
+			}
 		case state, ok := <-ch:
 			if !ok {
 				return
@@ -202,8 +230,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				s.logger.Error("encode sse", slog.Any("err", err))
 				continue
 			}
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-			flusher.Flush()
+			if !writeEvent("data: " + string(data) + "\n\n") {
+				return
+			}
 		}
 	}
 }
@@ -227,6 +256,12 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 	case req.Folder != "" && req.Path == "":
 		s.playFolder(w, req.Folder, "")
 	case req.Path != "":
+		// A path may point at an album. Treating it as a track would look for
+		// its parent folder and answer "no mp3 here" for a folder full of mp3.
+		if info, serr := s.lib.Stat(req.Path); serr == nil && info.IsDir() {
+			s.playFolder(w, req.Path, "")
+			return
+		}
 		folder := req.Folder
 		if folder == "" {
 			folder, err = s.lib.FolderOf(req.Path)
@@ -303,22 +338,42 @@ func (s *Server) handleSeek(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNext(w http.ResponseWriter, r *http.Request) {
-	s.step(w, 1)
+	s.step(w, r, 1)
 }
 
 func (s *Server) handlePrev(w http.ResponseWriter, r *http.Request) {
-	s.step(w, -1)
+	s.step(w, r, -1)
 }
 
-func (s *Server) step(w http.ResponseWriter, delta int) {
-	rel, index, ok := s.player.PeekUnplayed(s.store.HistorySet(), delta)
+func (s *Server) step(w http.ResponseWriter, r *http.Request, delta int) {
+	req, err := decodeJSON[struct {
+		Path string `json:"path"`
+	}](r)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.respondError(w, http.StatusBadRequest, "некорректный запрос")
+		return
+	}
+	expect := req.Path
+	hist := s.store.HistorySet()
+	rel, index, ok := s.player.PeekUnplayed(hist, delta)
+	snap := s.player.Snapshot()
+	if expect != "" && (snap.Track == nil || snap.Track.Path != expect) {
+		s.respondJSON(w, http.StatusOK, snap)
+		return
+	}
 	if !ok {
+		if player.HasUnplayed(snap.Queue, hist) {
+			s.respondError(w, http.StatusConflict, "в эту сторону треков больше нет")
+			return
+		}
 		s.player.Stop()
 		s.respondError(w, http.StatusConflict, "все треки уже звучали — очистите историю")
 		return
 	}
-	snap := s.player.Snapshot()
-	s.respondJSON(w, http.StatusOK, s.player.PlayQueue(snap.Queue, index, s.trackOf(rel), snap.Source))
+	// A second tab pressing next at the same time gets the state that won,
+	// not a second advance.
+	st, _ := s.player.PlayIfCurrent(snap.Queue, index, s.trackOf(rel), snap.Source, expect)
+	s.respondJSON(w, http.StatusOK, st)
 }
 
 func (s *Server) handleRandom(w http.ResponseWriter, r *http.Request) {
@@ -410,7 +465,12 @@ func (s *Server) handlePlaylistUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	pl, err := s.store.ReplacePlaylist(r.PathValue("id"), strings.TrimSpace(req.Name), req.Tracks)
 	if err != nil {
-		s.respondError(w, http.StatusNotFound, "плейлист не найден")
+		if errors.Is(err, store.ErrPlaylistNotFound) {
+			s.respondError(w, http.StatusNotFound, "плейлист не найден")
+			return
+		}
+		s.logger.Error("update playlist", slog.Any("err", err))
+		s.respondError(w, http.StatusInternalServerError, "не удалось сохранить плейлист")
 		return
 	}
 	s.respondJSON(w, http.StatusOK, s.playlistPayload(pl))
@@ -418,7 +478,12 @@ func (s *Server) handlePlaylistUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePlaylistDelete(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeletePlaylist(r.PathValue("id")); err != nil {
-		s.respondError(w, http.StatusNotFound, "плейлист не найден")
+		if errors.Is(err, store.ErrPlaylistNotFound) {
+			s.respondError(w, http.StatusNotFound, "плейлист не найден")
+			return
+		}
+		s.logger.Error("delete playlist", slog.Any("err", err))
+		s.respondError(w, http.StatusInternalServerError, "не удалось удалить плейлист")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -595,12 +660,12 @@ func (s *Server) respondError(w http.ResponseWriter, status int, msg string) {
 func decodeJSON[T any](r *http.Request) (T, error) {
 	var req T
 	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
-	defer r.Body.Close()
 	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
-		return req, err
+	err := dec.Decode(&req)
+	if cerr := r.Body.Close(); cerr != nil && err == nil {
+		err = cerr
 	}
-	return req, nil
+	return req, err
 }
 
 func recoverer(logger *slog.Logger, next http.Handler) http.Handler {
@@ -649,9 +714,11 @@ func (w *statusWriter) Flush() {
 	}
 }
 
-func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
-	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
-		return rf.ReadFrom(r)
-	}
-	return io.Copy(w.ResponseWriter, r)
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
+
+// ReadFrom is intentionally absent. http.ServeContent copies through
+// io.ReaderFrom when the writer has it, and the TCP connection's sendfile
+// path then stops after the 512-byte sniff, so the client gets a short body
+// with a full Content-Length. Playback and seeking need the whole range.

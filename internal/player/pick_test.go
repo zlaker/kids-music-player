@@ -8,8 +8,13 @@ func TestChooseStartSkipsHistory(t *testing.T) {
 	skip := map[string]struct{}{"a.mp3": {}, "c.mp3": {}}
 
 	idx, ok := ChooseStart(queue, "a.mp3", skip, false)
+	if !ok || queue[idx] != "a.mp3" {
+		t.Fatalf("explicit choice should play even if heard, got %d ok=%v", idx, ok)
+	}
+
+	idx, ok = ChooseStart(queue, "", skip, false)
 	if !ok || queue[idx] != "b.mp3" {
-		t.Fatalf("expected b.mp3, got %d ok=%v", idx, ok)
+		t.Fatalf("automatic choice should skip history, got %d ok=%v", idx, ok)
 	}
 
 	idx, ok = ChooseStart(queue, "b.mp3", skip, false)
