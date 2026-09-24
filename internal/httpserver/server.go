@@ -34,9 +34,14 @@ func New(lib *library.Library, tags *meta.Reader, st *store.Store, pl *player.Pl
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
-	mux.Handle("GET /app.js", staticFile("app.js"))
-	mux.Handle("GET /app.css", staticFile("app.css"))
-	mux.Handle("GET /alpine.min.js", staticFile("alpine.min.js"))
+	mux.Handle("GET /app.js", staticFile("app.js", ""))
+	mux.Handle("GET /app.css", staticFile("app.css", ""))
+	mux.Handle("GET /alpine.min.js", staticFile("alpine.min.js", ""))
+	mux.Handle("GET /manifest.webmanifest", staticFile("manifest.webmanifest", "application/manifest+json"))
+	mux.Handle("GET /icon-192.png", staticFile("icon-192.png", "image/png"))
+	mux.Handle("GET /icon-512.png", staticFile("icon-512.png", "image/png"))
+	mux.Handle("GET /apple-touch-icon.png", staticFile("apple-touch-icon.png", "image/png"))
+	mux.Handle("GET /favicon-32.png", staticFile("favicon-32.png", "image/png"))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := io.WriteString(w, "ok"); err != nil {
@@ -84,12 +89,15 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func staticFile(name string) http.Handler {
+func staticFile(name, contentType string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, err := fs.ReadFile(web.Files, name)
 		if err != nil {
 			http.NotFound(w, r)
 			return
+		}
+		if contentType != "" {
+			w.Header().Set("Content-Type", contentType)
 		}
 		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
 	})

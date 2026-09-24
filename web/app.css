@@ -57,12 +57,21 @@ button {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   margin-right: auto;
   background: transparent;
   box-shadow: none;
   font-size: 1.5rem;
   font-weight: 800;
   min-height: 3rem;
+}
+
+.logo {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.65rem;
 }
 
 .bar-btn { padding: 0 0.9rem; font-weight: 800; }
@@ -148,7 +157,18 @@ button {
 }
 
 .track.current { box-shadow: 0 0 0 4px #ffe0cc; }
-.track.played { opacity: 0.45; }
+/* Heard tracks stay fully tappable. History only keeps automatic play
+   from repeating them; a tap on the row starts that file again. */
+.heard {
+  display: inline-block;
+  margin-right: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
 
 .track-play {
   display: flex;

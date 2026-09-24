@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Детский плеер</title>
   <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#fff4e6">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Музыка">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
 </head>
 <body>
   <div x-data="playerApp()" x-init="init()" x-cloak>
@@ -13,7 +21,10 @@
     </button>
     <header class="topbar">
       <div class="topbar-inner">
-        <button @click="open('')" class="brand">Музыка</button>
+        <button @click="open('')" class="brand">
+          <img src="/icon-192.png" alt="" width="36" height="36" class="logo">
+          <span>Музыка</span>
+        </button>
         <button @click="panel = 'timer'" class="bar-btn">
           <span x-show="!sleepLeft">Таймер</span>
           <span x-show="sleepLeft" x-text="'Таймер ' + sleepLeft"></span>
@@ -79,7 +90,10 @@
                 </div>
                 <div class="titles">
                   <div class="title" x-text="item.title || item.name"></div>
-                  <div class="sub" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
+                  <div class="sub">
+                    <span x-show="item.played" class="heard">слушали</span>
+                    <span x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></span>
+                  </div>
                 </div>
               </button>
               <button @click="startAddTracks([item.path])" class="icon-btn">+</button>
@@ -177,7 +191,10 @@
                     </div>
                     <div class="titles">
                       <div class="title" x-text="item.title || item.name || item.path"></div>
-                      <div class="sub" x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></div>
+                      <div class="sub">
+                        <span x-show="item.played" class="heard">слушали</span>
+                        <span x-text="[item.artist, item.album].filter(Boolean).join(' · ')"></span>
+                      </div>
                     </div>
                   </button>
                   <button @click="removeFromPlaylist(item.path)" class="icon-btn">−</button>

@@ -45,6 +45,43 @@ func testServer(t *testing.T) (*Server, string) {
 	return s, root
 }
 
+func TestInstallIcons(t *testing.T) {
+	s, _ := testServer(t)
+	h := s.Handler()
+	for _, path := range []string{"/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/favicon-32.png"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status %d", path, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/manifest.webmanifest", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/manifest+json") {
+		t.Fatalf("manifest content-type %q", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"name": "Детский плеер"`) {
+		t.Fatalf("manifest = %s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/icon-192.png", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !bytes.HasPrefix(rec.Body.Bytes(), []byte("\x89PNG")) {
+		t.Fatal("icon is not a png")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `rel="manifest"`) || !strings.Contains(rec.Body.String(), "/apple-touch-icon.png") {
+		t.Fatal("index is missing install links")
+	}
+}
+
 func TestLibraryAndTraversal(t *testing.T) {
 	s, _ := testServer(t)
 	h := s.Handler()
