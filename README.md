@@ -48,12 +48,13 @@ kids-update
 ## Флаги
 
 ```text
-kids-music-player -music /path/to/music [-listen :21983] [-state-dir DIR]
+kids-music-player -music /path/to/music [-listen :21983] [-state-dir DIR] [-user USER -password PASS]
 ```
 
 - `-music` — корень библиотеки, только `.mp3`
 - `-listen` — адрес HTTP, по умолчанию `:21983`
 - `-state-dir` — плейлисты и история, по умолчанию `~/.kids-music-player`
+- `-user` и `-password` — HTTP Basic Auth. Пустые оба: сервер открыт, как в локальной сети. Браузер запоминает пару для сайта, поэтому на телефоне её вводят один раз. Те же значения можно положить в `KIDS_MUSIC_USER` и `KIDS_MUSIC_PASSWORD`.
 
 ## Возможности
 
@@ -65,4 +66,11 @@ kids-music-player -music /path/to/music [-listen :21983] [-state-dir DIR]
 - история проигранного с очисткой
 - один общий плеер на все телефоны в сети
 
-Порт без пароля. Не выставляйте его в интернет.
+Для адреса в интернете задайте пользователя и пароль. Файл `auth.env` рядом с бинарником подхватывает unit (`EnvironmentFile=-.../auth.env`):
+
+```bash
+printf 'KIDS_MUSIC_USER=%s\nKIDS_MUSIC_PASSWORD=%s\n' 'дом' 'длинный-пароль' > /home/alex/Apps/kids-music-player/auth.env
+chmod 600 /home/alex/Apps/kids-music-player/auth.env
+```
+
+В nginx второй пароль не нужен: браузер один раз ответит на запрос плеера, и nginx передаст этот заголовок дальше.

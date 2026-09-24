@@ -22,6 +22,8 @@ type Config struct {
 	MusicDir string
 	Listen   string
 	StateDir string
+	User     string
+	Password string
 }
 
 func Run(ctx context.Context, logger *slog.Logger, cfg Config) error {
@@ -47,6 +49,9 @@ func Run(ctx context.Context, logger *slog.Logger, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	if (cfg.User == "") != (cfg.Password == "") {
+		return fmt.Errorf("basic auth needs both -user and -password")
+	}
 
 	tags := meta.New(lib)
 	pl := player.New()
@@ -61,7 +66,12 @@ func Run(ctx context.Context, logger *slog.Logger, cfg Config) error {
 		}
 	}
 
-	handler := httpserver.New(lib, tags, st, pl, logger).Handler()
+	srvHTTP := httpserver.New(lib, tags, st, pl, logger)
+	srvHTTP.SetAuth(cfg.User, cfg.Password)
+	if cfg.User != "" {
+		logger.Info("basic auth on", slog.String("user", cfg.User))
+	}
+	handler := srvHTTP.Handler()
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           handler,

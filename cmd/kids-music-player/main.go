@@ -20,10 +20,12 @@ func run() int {
 	musicDir := flag.String("music", "", "directory with mp3 albums (required)")
 	listen := flag.String("listen", ":21983", "HTTP listen address")
 	stateDir := flag.String("state-dir", "", "directory for playlists and history (default ~/.kids-music-player)")
+	user := flag.String("user", os.Getenv("KIDS_MUSIC_USER"), "basic auth user; empty leaves the server open")
+	password := flag.String("password", os.Getenv("KIDS_MUSIC_PASSWORD"), "basic auth password")
 	flag.Parse()
 
 	if *musicDir == "" {
-		fmt.Fprintln(os.Stderr, "usage: kids-music-player -music /path/to/music [-listen :21983] [-state-dir DIR]")
+		fmt.Fprintln(os.Stderr, "usage: kids-music-player -music /path/to/music [-listen :21983] [-state-dir DIR] [-user USER -password PASS]")
 		return 2
 	}
 
@@ -36,6 +38,8 @@ func run() int {
 		MusicDir: *musicDir,
 		Listen:   *listen,
 		StateDir: *stateDir,
+		User:     *user,
+		Password: *password,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "kids-music-player: %v\n", err)
 		return 1

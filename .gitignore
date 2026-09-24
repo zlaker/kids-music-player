@@ -27,6 +27,7 @@ vendor/
 # Environment
 .env
 .env.local
+auth.env
 
 # Local music / runtime
 /tmp/

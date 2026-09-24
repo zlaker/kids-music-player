@@ -45,6 +45,38 @@ func testServer(t *testing.T) (*Server, string) {
 	return s, root
 }
 
+func TestBasicAuth(t *testing.T) {
+	s, _ := testServer(t)
+	s.SetAuth("дом", "секрет")
+	h := s.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/player", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("WWW-Authenticate"), "Basic ") {
+		t.Fatalf("www-authenticate %q", rec.Header().Get("WWW-Authenticate"))
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/player", nil)
+	req.SetBasicAuth("дом", "не тот")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/player", nil)
+	req.SetBasicAuth("дом", "секрет")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("right password status %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestInstallIcons(t *testing.T) {
 	s, _ := testServer(t)
 	h := s.Handler()

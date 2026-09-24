@@ -2,8 +2,12 @@ package httpserver
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"hash"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -20,15 +24,25 @@ import (
 )
 
 type Server struct {
-	lib    *library.Library
-	meta   *meta.Reader
-	store  *store.Store
-	player *player.Player
-	logger *slog.Logger
+	lib      *library.Library
+	meta     *meta.Reader
+	store    *store.Store
+	player   *player.Player
+	logger   *slog.Logger
+	user     string
+	password string
 }
 
 func New(lib *library.Library, tags *meta.Reader, st *store.Store, pl *player.Player, logger *slog.Logger) *Server {
 	return &Server{lib: lib, meta: tags, store: st, player: pl, logger: logger}
+}
+
+// SetAuth turns on HTTP basic auth. An empty user and password leaves the
+// server open, which is the LAN default. The browser stores the pair for this
+// site, so a person types it once per phone.
+func (s *Server) SetAuth(user, password string) {
+	s.user = user
+	s.password = password
 }
 
 func (s *Server) Handler() http.Handler {
@@ -74,7 +88,40 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/playlists/{id}/tracks", s.handlePlaylistAddTracks)
 	mux.HandleFunc("DELETE /api/playlists/{id}/tracks/{path...}", s.handlePlaylistRemoveTrack)
 
-	return recoverer(s.logger, requestLog(s.logger, mux))
+	return basicAuth(s.user, s.password, recoverer(s.logger, requestLog(s.logger, mux)))
+}
+
+func basicAuth(user, password string, next http.Handler) http.Handler {
+	if user == "" && password == "" {
+		return next
+	}
+	expected := secretSum(user, password)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPassword, ok := r.BasicAuth()
+		got := secretSum(gotUser, gotPassword)
+		if !ok || subtle.ConstantTimeCompare(expected[:], got[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Детский плеер", charset="UTF-8"`)
+			http.Error(w, "нужен пароль", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func secretSum(user, password string) [32]byte {
+	h := sha256.New()
+	writeLenPrefixed(h, user)
+	writeLenPrefixed(h, password)
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+func writeLenPrefixed(h hash.Hash, s string) {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], uint64(len(s)))
+	_, _ = h.Write(buf[:])
+	_, _ = h.Write([]byte(s))
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
