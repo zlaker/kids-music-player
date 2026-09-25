@@ -9,6 +9,6 @@ Single-binary Go **web server** (`net/http`, no Gin/Echo/Chi unless asked). List
 
 Music directory is a CLI flag (required). Never serve files outside that directory.
 
-Playback is HTML5 in the browser. One shared player for all tabs. mp3 only. Folders as albums. No auth. Sleep timer stops music only. Random play is on by default and skips tracks already in history until history is cleared.
+Playback is HTML5 in the browser. One shared player for all tabs. mp3 only. Folders as albums. Auth is a session cookie once an account exists; an empty accounts database stays open. Sleep timer stops music only. Random play is on by default and skips tracks already in history until history is cleared.
 
 Read `.cursor/skills/kids-music-player/SKILL.md` before implementing.

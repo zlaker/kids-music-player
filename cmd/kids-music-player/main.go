@@ -20,8 +20,8 @@ func run() int {
 	musicDir := flag.String("music", "", "directory with mp3 albums (required)")
 	listen := flag.String("listen", ":21983", "HTTP listen address")
 	stateDir := flag.String("state-dir", "", "directory for playlists and history (default ~/.kids-music-player)")
-	user := flag.String("user", os.Getenv("KIDS_MUSIC_USER"), "basic auth user; empty leaves the server open")
-	password := flag.String("password", os.Getenv("KIDS_MUSIC_PASSWORD"), "basic auth password")
+	user := flag.String("user", os.Getenv("KIDS_MUSIC_USER"), "account to seed; empty leaves the server open until a user exists")
+	password := flag.String("password", os.Getenv("KIDS_MUSIC_PASSWORD"), "password for the seeded account")
 	flag.Parse()
 
 	if *musicDir == "" {

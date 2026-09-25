@@ -32,6 +32,7 @@
         <button @click="openHistory()" class="bar-btn">История</button>
         <button @click="toggleRandom()" class="bar-btn" :class="player.random ? 'on' : ''">Случайно</button>
         <button @click="openPlaylists()" class="bar-btn">Плейлисты</button>
+        <button x-show="account" @click="logout()" class="bar-btn" x-text="'Выйти · ' + account"></button>
       </div>
     </header>
 

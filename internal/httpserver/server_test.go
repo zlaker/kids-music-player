@@ -13,6 +13,9 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
+
+	"kids-music-player/internal/auth"
 	"kids-music-player/internal/library"
 	"kids-music-player/internal/meta"
 	"kids-music-player/internal/player"
@@ -45,35 +48,75 @@ func testServer(t *testing.T) (*Server, string) {
 	return s, root
 }
 
-func TestBasicAuth(t *testing.T) {
+func TestLoginCookieIdentifiesTheUser(t *testing.T) {
 	s, _ := testServer(t)
-	s.SetAuth("дом", "секрет")
+	accounts, err := auth.Open(filepath.Join(t.TempDir(), "database.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = accounts.Close() })
+	accounts.SetCostForTest(bcrypt.MinCost)
+	if err := accounts.Seed("дом", "секрет"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UseAccounts(accounts); err != nil {
+		t.Fatal(err)
+	}
 	h := s.Handler()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/player", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status %d", rec.Code)
-	}
-	if !strings.Contains(rec.Header().Get("WWW-Authenticate"), "Basic ") {
-		t.Fatalf("www-authenticate %q", rec.Header().Get("WWW-Authenticate"))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("page without a session: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/player", nil)
-	req.SetBasicAuth("дом", "не тот")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong password status %d", rec.Code)
+		t.Fatalf("api without a session: %d", rec.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/player", nil)
-	req.SetBasicAuth("дом", "секрет")
+	form := url.Values{"name": {"дом"}, "password": {"не тот"}}
+	req = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("right password status %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password: %d", rec.Code)
+	}
+
+	form.Set("password", "секрет")
+	req = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("login: %d %s", rec.Code, rec.Body.String())
+	}
+	cookie := rec.Result().Cookies()
+	if len(cookie) != 1 || cookie[0].Name != auth.CookieName || !cookie[0].HttpOnly {
+		t.Fatalf("cookie = %#v", cookie)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	req.AddCookie(cookie[0])
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"дом"`) {
+		t.Fatalf("me: %d %s", rec.Code, rec.Body.String())
+	}
+
+	if err := accounts.SetStatus("дом", auth.StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/player", nil)
+	req.AddCookie(cookie[0])
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled account still entered: %d", rec.Code)
 	}
 }
 

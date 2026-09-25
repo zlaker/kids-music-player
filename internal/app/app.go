@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"kids-music-player/internal/auth"
 	"kids-music-player/internal/httpserver"
 	"kids-music-player/internal/library"
 	"kids-music-player/internal/meta"
@@ -49,8 +50,13 @@ func Run(ctx context.Context, logger *slog.Logger, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if (cfg.User == "") != (cfg.Password == "") {
-		return fmt.Errorf("basic auth needs both -user and -password")
+	accounts, err := auth.Open(filepath.Join(stateDir, "database.sqlite"))
+	if err != nil {
+		return err
+	}
+	defer accounts.Close()
+	if err := accounts.Seed(cfg.User, cfg.Password); err != nil {
+		return err
 	}
 
 	tags := meta.New(lib)
@@ -67,9 +73,11 @@ func Run(ctx context.Context, logger *slog.Logger, cfg Config) error {
 	}
 
 	srvHTTP := httpserver.New(lib, tags, st, pl, logger)
-	srvHTTP.SetAuth(cfg.User, cfg.Password)
+	if err := srvHTTP.UseAccounts(accounts); err != nil {
+		return err
+	}
 	if cfg.User != "" {
-		logger.Info("basic auth on", slog.String("user", cfg.User))
+		logger.Info("login on", slog.String("user", cfg.User))
 	}
 	handler := srvHTTP.Handler()
 	srv := &http.Server{

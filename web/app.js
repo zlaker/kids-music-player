@@ -64,9 +64,13 @@ function playerApp() {
       return this.fmt(left / 1000);
     },
 
+    account: '',
+
     async init() {
       this.volume = readVolume();
       setInterval(() => { this.now = Date.now(); }, 1000);
+      const me = await this.api('/api/me');
+      this.account = me && me.name || '';
       await this.open('');
       this.connectEvents();
       await this.refreshPlayer();
@@ -495,12 +499,20 @@ function playerApp() {
       const s = seconds % 60;
       return m + ':' + String(s).padStart(2, '0');
     },
+    async logout() {
+      await fetch('/logout', { method: 'POST' });
+      window.location.href = '/login';
+    },
     async api(url, opts = {}) {
       const res = await fetch(url, {
         method: opts.method || 'GET',
         headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
         body: opts.body ? JSON.stringify(opts.body) : undefined,
       });
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return null;
+      }
       if (res.status === 204) return null;
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Нет связи');

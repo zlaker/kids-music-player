@@ -2,12 +2,8 @@ package httpserver
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"hash"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -16,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"kids-music-player/internal/auth"
 	"kids-music-player/internal/library"
 	"kids-music-player/internal/meta"
 	"kids-music-player/internal/player"
@@ -29,20 +26,28 @@ type Server struct {
 	store    *store.Store
 	player   *player.Player
 	logger   *slog.Logger
-	user     string
-	password string
+	accounts *auth.Store
+	authOn   bool
 }
 
 func New(lib *library.Library, tags *meta.Reader, st *store.Store, pl *player.Player, logger *slog.Logger) *Server {
 	return &Server{lib: lib, meta: tags, store: st, player: pl, logger: logger}
 }
 
-// SetAuth turns on HTTP basic auth. An empty user and password leaves the
-// server open, which is the LAN default. The browser stores the pair for this
-// site, so a person types it once per phone.
-func (s *Server) SetAuth(user, password string) {
-	s.user = user
-	s.password = password
+// UseAccounts turns login on when the database holds at least one user.
+// An empty database leaves the server open, which is the LAN default.
+func (s *Server) UseAccounts(accounts *auth.Store) error {
+	s.accounts = accounts
+	if accounts == nil {
+		s.authOn = false
+		return nil
+	}
+	n, err := accounts.Count()
+	if err != nil {
+		return err
+	}
+	s.authOn = n > 0
+	return nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -56,6 +61,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /icon-512.png", staticFile("icon-512.png", "image/png"))
 	mux.Handle("GET /apple-touch-icon.png", staticFile("apple-touch-icon.png", "image/png"))
 	mux.Handle("GET /favicon-32.png", staticFile("favicon-32.png", "image/png"))
+	mux.HandleFunc("GET /login", s.handleLogin)
+	mux.HandleFunc("POST /login", s.handleLogin)
+	mux.HandleFunc("POST /logout", s.handleLogout)
+	mux.HandleFunc("GET /api/me", s.handleMe)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := io.WriteString(w, "ok"); err != nil {
@@ -88,40 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/playlists/{id}/tracks", s.handlePlaylistAddTracks)
 	mux.HandleFunc("DELETE /api/playlists/{id}/tracks/{path...}", s.handlePlaylistRemoveTrack)
 
-	return basicAuth(s.user, s.password, recoverer(s.logger, requestLog(s.logger, mux)))
-}
-
-func basicAuth(user, password string, next http.Handler) http.Handler {
-	if user == "" && password == "" {
-		return next
-	}
-	expected := secretSum(user, password)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotUser, gotPassword, ok := r.BasicAuth()
-		got := secretSum(gotUser, gotPassword)
-		if !ok || subtle.ConstantTimeCompare(expected[:], got[:]) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Детский плеер", charset="UTF-8"`)
-			http.Error(w, "нужен пароль", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func secretSum(user, password string) [32]byte {
-	h := sha256.New()
-	writeLenPrefixed(h, user)
-	writeLenPrefixed(h, password)
-	var out [32]byte
-	copy(out[:], h.Sum(nil))
-	return out
-}
-
-func writeLenPrefixed(h hash.Hash, s string) {
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], uint64(len(s)))
-	_, _ = h.Write(buf[:])
-	_, _ = h.Write([]byte(s))
+	return s.requireUser(recoverer(s.logger, requestLog(s.logger, mux)))
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

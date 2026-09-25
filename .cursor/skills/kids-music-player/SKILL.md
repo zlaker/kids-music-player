@@ -16,7 +16,7 @@ Home LAN music player. One Go binary. Simple web UI. Runs on Ubuntu Server.
 - Features: file list, sleep timer, simple playlists, played-files history with clear, progress + seek, next track, covers + tags in player and list
 - Deploy: must survive a closed SSH session (systemd unit, not `nohup` as the documented path)
 - Playback: **HTML5 audio in the browser** — server only serves files + API, no mpv/ALSA
-- Auth: open on the LAN, no password
+- Auth: open on the LAN while the accounts database is empty. `-user` and `-password` seed an account; once any account exists, a session cookie is required. The cookie holds a random id, and the server resolves it to the user and rejects a disabled account
 - Sleep timer: **stop playback only** (no host shutdown, no fade)
 - Formats: **mp3 only**
 - Library: **folders as albums**, navigate into them
