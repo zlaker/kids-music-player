@@ -16,6 +16,7 @@
 </head>
 <body>
   <div x-data="playerApp()" x-init="init()" x-cloak>
+    <div class="pull-refresh" x-show="pull >= 24" x-cloak x-text="pull >= 80 ? 'Отпустите' : 'Обновить'"></div>
     <button x-show="needsUnlock" @click="unlock()" class="unlock">
       Нажмите, чтобы включить звук
     </button>

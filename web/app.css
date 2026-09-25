@@ -21,6 +21,23 @@ body {
   font-family: ui-rounded, "Avenir Next", "Segoe UI", system-ui, sans-serif;
   font-weight: 700;
   padding-bottom: calc(16rem + env(safe-area-inset-bottom));
+  overscroll-behavior-y: none;
+}
+
+.pull-refresh {
+  position: fixed;
+  z-index: 50;
+  top: calc(env(safe-area-inset-top) + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--peach);
+  font-size: 0.9rem;
+  font-weight: 800;
+  box-shadow: 0 1px 2px rgb(61 42 28 / 8%);
 }
 
 button, input { font: inherit; color: inherit; }

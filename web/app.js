@@ -2,6 +2,72 @@ function encodePath(rel) {
   return (rel || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
 }
 
+// A downward pull while the page is already at the top reloads it. The gesture
+// stays quiet for the player bar, form fields, and any list that still has
+// room to scroll.
+function bindPullToRefresh(app) {
+  const threshold = 80;
+  let startX = 0;
+  let startY = 0;
+  let armed = false;
+
+  const ignored = (target) => !target || !target.closest || Boolean(target.closest('input, textarea, select, footer'));
+
+  const scrolledDown = (target) => {
+    let el = target;
+    while (el && el !== document.documentElement) {
+      if (el.scrollHeight > el.clientHeight + 1) {
+        const overflow = getComputedStyle(el).overflowY;
+        if ((overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') && el.scrollTop > 0) return true;
+      }
+      el = el.parentElement;
+    }
+    return window.scrollY > 0;
+  };
+
+  window.addEventListener('touchstart', (event) => {
+    armed = false;
+    app.pull = 0;
+    if (event.touches.length !== 1 || ignored(event.target) || scrolledDown(event.target)) return;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+    armed = true;
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (event) => {
+    if (!armed || event.touches.length !== 1) return;
+    const dx = event.touches[0].clientX - startX;
+    const dy = event.touches[0].clientY - startY;
+    if (dy <= 0 || Math.abs(dx) > dy) {
+      if (Math.abs(dx) > 8) {
+        armed = false;
+        app.pull = 0;
+      }
+      return;
+    }
+    if (scrolledDown(event.target)) {
+      armed = false;
+      app.pull = 0;
+      return;
+    }
+    event.preventDefault();
+    app.pull = Math.min(dy, 110);
+  }, { passive: false });
+
+  window.addEventListener('touchend', () => {
+    if (!armed) return;
+    const reload = app.pull >= threshold;
+    armed = false;
+    app.pull = 0;
+    if (reload) window.location.reload();
+  }, { passive: true });
+
+  window.addEventListener('touchcancel', () => {
+    armed = false;
+    app.pull = 0;
+  }, { passive: true });
+}
+
 function playerApp() {
   let es = null;
   let seekTimer = null;
@@ -65,8 +131,10 @@ function playerApp() {
     },
 
     account: '',
+    pull: 0,
 
     async init() {
+      bindPullToRefresh(this);
       this.volume = readVolume();
       setInterval(() => { this.now = Date.now(); }, 1000);
       const me = await this.api('/api/me');
