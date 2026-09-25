@@ -15,12 +15,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 </head>
 <body>
-  <div x-data="playerApp()" x-init="init()" x-cloak>
+  <div x-data="playerApp()" x-init="init()" x-cloak @keydown.window="hotkey($event)" :class="player.track ? 'has-player' : ''">
     <div class="pull-refresh" x-show="pull >= 24" x-cloak x-text="pull >= 80 ? 'Отпустите' : 'Обновить'"></div>
     <button x-show="needsUnlock" @click="unlock()" class="unlock">
       Нажмите, чтобы включить звук
     </button>
-    <header class="topbar">
+    <header class="topbar chrome" :class="chromeHidden ? 'chrome-up' : ''">
       <div class="topbar-inner">
         <button @click="open('')" class="brand">
           <img src="/icon-192.png" alt="" width="36" height="36" class="logo">
@@ -52,6 +52,20 @@
       <div x-show="loading" class="muted">Загрузка…</div>
       <div x-show="!loading && folders.length === 0 && tracks.length === 0" class="muted">В этой папке нет mp3.</div>
 
+      <section x-show="!path && cont" class="continue-wrap">
+        <button @click="playContinue()" class="continue">
+          <div class="cover-lg">
+            <img x-show="cont.hasCover" :src="coverUrl(cont.path)" alt="">
+            <div x-show="!cont.hasCover" class="ph">🎵</div>
+          </div>
+          <div>
+            <div class="peach-text">Продолжить</div>
+            <div x-text="cont.album"></div>
+            <div class="sub" x-text="cont.title"></div>
+          </div>
+        </button>
+      </section>
+
       <section x-show="folders.length">
         <div class="album-grid">
           <template x-for="item in folders" :key="item.path">
@@ -70,7 +84,7 @@
         <div class="track-head">
           <h2>Треки</h2>
           <div class="row">
-            <button @click="playFolder()" class="bar-btn peach">Играть папку</button>
+            <button @click="playFolder()" class="bar-btn peach" x-text="progress ? 'Продолжить' : 'Играть папку'"></button>
             <button @click="createPlaylistFromFolder()" class="bar-btn">В плейлист</button>
           </div>
         </div>
@@ -170,7 +184,12 @@
         <template x-if="panel === 'playlist' && currentPlaylist">
           <div>
             <button @click="openPlaylists()" class="wide">← К плейлистам</button>
+            <div class="form-row" style="margin-top: 1rem" x-show="renaming">
+              <input x-model="renameValue" aria-label="Новое имя" @keydown.enter.prevent="saveRename()">
+              <button @click="saveRename()" class="bar-btn peach">Сохранить</button>
+            </div>
             <div class="row" style="margin: 1rem 0">
+              <button @click="startRename()" class="bar-btn">Переименовать</button>
               <button
                 x-show="currentPlaylist.tracks && currentPlaylist.tracks.length"
                 @click="playPlaylist(currentPlaylist.id); closePanel()"
@@ -184,8 +203,10 @@
               Пока нет треков. Нажмите + у песни.
             </div>
             <div class="track-list">
-              <template x-for="item in (currentPlaylist.tracks || [])" :key="item.path">
+              <template x-for="(item, index) in (currentPlaylist.tracks || [])" :key="item.path">
                 <div class="track" :class="(player.track && player.track.path === item.path ? 'current ' : '') + (item.played ? 'played' : '')">
+                  <button @click="movePlaylistTrack(index, -1)" class="icon-btn" aria-label="Выше">↑</button>
+                  <button @click="movePlaylistTrack(index, 1)" class="icon-btn" aria-label="Ниже">↓</button>
                   <button @click="playPlaylist(currentPlaylist.id, item.path); closePanel()" class="track-play">
                     <div class="cover">
                       <img x-show="item.hasCover" :src="coverUrl(item.path)" alt="">
@@ -208,7 +229,7 @@
       </div>
     </div>
 
-    <footer class="player-bar">
+    <footer x-show="player.track" class="player-bar chrome" :class="chromeHidden ? 'chrome-down' : ''">
       <div class="player-inner">
         <div class="player-main">
           <div class="cover">
@@ -220,10 +241,16 @@
             <div class="sub" x-text="player.track ? [player.track.artist, player.track.album].filter(Boolean).join(' · ') : 'Выберите трек'"></div>
           </div>
           <div class="transport">
-            <button @click="prev()">⏮</button>
-            <button @click="toggle()" class="peach" x-text="player.playing ? '⏸' : '▶'"></button>
-            <button @click="next()">⏭</button>
+            <button @click="prev()" aria-label="Предыдущий трек">⏮</button>
+            <button @click="toggle()" class="peach" :aria-label="player.playing ? 'Пауза' : 'Играть'" x-text="player.playing ? '⏸' : '▶'"></button>
+            <button @click="next()" aria-label="Следующий трек">⏭</button>
           </div>
+        </div>
+        <div class="jump-row">
+          <button @click="jump(-30)" aria-label="Назад 30 секунд">−30</button>
+          <button @click="jump(-15)" aria-label="Назад 15 секунд">−15</button>
+          <button @click="jump(15)" aria-label="Вперёд 15 секунд">+15</button>
+          <button @click="jump(30)" aria-label="Вперёд 30 секунд">+30</button>
         </div>
         <div class="seek-row">
           <span class="time" x-text="fmt(localPosition)"></span>

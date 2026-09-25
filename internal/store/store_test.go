@@ -220,3 +220,27 @@ func TestClearHistoryRollsBackWhenSaveFails(t *testing.T) {
 		t.Fatalf("history after failed clear = %#v", got)
 	}
 }
+
+func TestAlbumProgressSurvivesReopen(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveProgress("Альбом", "Альбом/two.mp3", 12.5, 40, true); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := again.AlbumProgress("Альбом")
+	if !ok || got.Path != "Альбом/two.mp3" || got.Seconds != 12.5 {
+		t.Fatalf("progress = %#v ok=%v", got, ok)
+	}
+	last, ok := again.LastProgress()
+	if !ok || last.Path != got.Path {
+		t.Fatalf("last = %#v ok=%v", last, ok)
+	}
+}

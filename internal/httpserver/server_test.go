@@ -192,6 +192,31 @@ func TestLibraryAndTraversal(t *testing.T) {
 	}
 }
 
+func TestPlayFolderResumesSavedTrack(t *testing.T) {
+	s, _ := testServer(t)
+	h := s.Handler()
+	if err := s.store.SaveProgress("Альбом", "Альбом/two.mp3", 12.5, 40, true); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSON(t, h, http.MethodPost, "/api/player/play", `{"folder":"Альбом"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("play status %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"path":"Альбом/two.mp3"`) || !strings.Contains(rec.Body.String(), `"position":12.5`) {
+		t.Fatalf("did not resume: %s", rec.Body.String())
+	}
+
+	lib := doJSON(t, h, http.MethodGet, "/api/library", "")
+	if !strings.Contains(lib.Body.String(), `"continue"`) || !strings.Contains(lib.Body.String(), "Альбом/two.mp3") {
+		t.Fatalf("home has no continue card: %s", lib.Body.String())
+	}
+	inside := doJSON(t, h, http.MethodGet, "/api/library?path="+url.QueryEscape("Альбом"), "")
+	if !strings.Contains(inside.Body.String(), `"progress"`) {
+		t.Fatalf("album has no progress: %s", inside.Body.String())
+	}
+}
+
 func TestPlayAcceptsFolderAsPath(t *testing.T) {
 	s, _ := testServer(t)
 	h := s.Handler()
@@ -238,11 +263,9 @@ func TestPlayAndHistory(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("play folder status %d %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), `"path":"Альбом/one.mp3"`) {
-		t.Fatalf("should skip history track, got %s", rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "Альбом/two.mp3") {
-		t.Fatalf("expected remaining track, got %s", rec.Body.String())
+	// A saved place wins over the history skip, so the album continues where it stopped.
+	if !strings.Contains(rec.Body.String(), `"path":"Альбом/one.mp3"`) {
+		t.Fatalf("folder play should resume the saved track, got %s", rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/player/play", strings.NewReader(`{"path":"Альбом/one.mp3"}`))

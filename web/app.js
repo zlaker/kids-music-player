@@ -132,9 +132,16 @@ function playerApp() {
 
     account: '',
     pull: 0,
+    cont: null,
+    progress: null,
+    chromeHidden: false,
+    lastScroll: 0,
+    renaming: false,
+    renameValue: '',
 
     async init() {
       bindPullToRefresh(this);
+      window.addEventListener('scroll', () => this.onScroll(), { passive: true });
       this.volume = readVolume();
       setInterval(() => { this.now = Date.now(); }, 1000);
       const me = await this.api('/api/me');
@@ -159,6 +166,8 @@ function playerApp() {
         this.path = rel || '';
         this.parent = data.parent || '';
         this.items = data.items || [];
+        this.cont = data.continue || null;
+        this.progress = data.progress || null;
       } catch (err) {
         this.notice = 'Нет связи. Список не обновился.';
       } finally {
@@ -323,6 +332,8 @@ function playerApp() {
       set('pause', () => { this.toggle(); });
       set('previoustrack', () => { this.prev(); });
       set('nexttrack', () => { this.next(); });
+      set('seekbackward', (details) => { this.jump(-((details && details.seekOffset) || 15)); });
+      set('seekforward', (details) => { this.jump((details && details.seekOffset) || 15); });
       if (this.duration > 0 && navigator.mediaSession.setPositionState) {
         const pos = Math.min(Math.max(0, this.localPosition || 0), this.duration);
         try {
@@ -341,7 +352,7 @@ function playerApp() {
       this.lastReport = now;
       this.api('/api/player/position', {
         method: 'POST',
-        body: { path: this.player.track.path, seconds: this.localPosition },
+        body: { path: this.player.track.path, seconds: this.localPosition, duration: this.duration },
       }).catch(() => {});
       this.updateMediaSession();
     },
@@ -381,6 +392,40 @@ function playerApp() {
     },
     async playFolder() {
       await this.tryPlay(() => this.api('/api/player/play', { method: 'POST', body: { folder: this.path } }));
+    },
+    async playContinue() {
+      if (!this.cont || !this.cont.folder) return;
+      await this.tryPlay(() => this.api('/api/player/play', { method: 'POST', body: { folder: this.cont.folder } }));
+    },
+    hotkey(event) {
+      const tag = (event.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+      const handlers = {
+        ' ': () => this.toggle(),
+        ArrowLeft: () => this.jump(-15),
+        ArrowRight: () => this.jump(15),
+        ArrowUp: () => this.prev(),
+        ArrowDown: () => this.next(),
+      };
+      const handler = handlers[event.key];
+      if (!handler) return;
+      event.preventDefault();
+      handler();
+    },
+    onScroll() {
+      const y = Math.max(0, window.scrollY);
+      const step = 12;
+      if (y < 64) this.chromeHidden = false;
+      else if (y > this.lastScroll + step) this.chromeHidden = true;
+      else if (y < this.lastScroll - step) this.chromeHidden = false;
+      else return;
+      this.lastScroll = y;
+    },
+    jump(delta) {
+      if (!this.player.track) return;
+      const seconds = Math.max(0, (Number(this.localPosition) || 0) + delta);
+      const cap = Number(this.duration) || 0;
+      this.seek(cap > 0 ? Math.min(seconds, cap) : seconds);
     },
     async playPlaylist(id, path) {
       const body = path ? { path } : {};
@@ -497,6 +542,7 @@ function playerApp() {
     },
     async openPlaylist(id) {
       this.addTrackPaths = [];
+      this.renaming = false;
       this.panel = 'playlist';
       this.currentPlaylist = await this.api('/api/playlists/' + id);
     },
@@ -527,6 +573,42 @@ function playerApp() {
         return;
       }
       await this.openPlaylist(pl.id);
+    },
+    startRename() {
+      if (!this.currentPlaylist) return;
+      this.renameValue = this.currentPlaylist.name || '';
+      this.renaming = true;
+    },
+    async saveRename() {
+      if (!this.currentPlaylist) return;
+      const name = this.renameValue.trim();
+      if (!name) return;
+      try {
+        this.currentPlaylist = await this.api('/api/playlists/' + encodeURIComponent(this.currentPlaylist.id), {
+          method: 'PUT',
+          body: { name },
+        });
+        this.renaming = false;
+      } catch (err) {
+        this.notice = err.message || 'Не удалось переименовать';
+      }
+    },
+    async movePlaylistTrack(index, delta) {
+      if (!this.currentPlaylist || !this.currentPlaylist.tracks) return;
+      const tracks = this.currentPlaylist.tracks.map((item) => item.path);
+      const next = index + delta;
+      if (next < 0 || next >= tracks.length) return;
+      const swapped = tracks[index];
+      tracks[index] = tracks[next];
+      tracks[next] = swapped;
+      try {
+        this.currentPlaylist = await this.api('/api/playlists/' + encodeURIComponent(this.currentPlaylist.id), {
+          method: 'PUT',
+          body: { tracks },
+        });
+      } catch (err) {
+        this.notice = err.message || 'Не удалось переставить трек';
+      }
     },
     async removeFromPlaylist(path) {
       if (!this.currentPlaylist) return;

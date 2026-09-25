@@ -86,7 +86,12 @@ func (p *Player) Subscribe() (<-chan State, func()) {
 }
 
 func (p *Player) PlayQueue(queue []string, index int, track Track, source string) State {
-	st, _ := p.play(queue, index, track, source, "")
+	return p.PlayQueueAt(queue, index, track, source, 0)
+}
+
+// PlayQueueAt starts the queue at index and a position inside that track.
+func (p *Player) PlayQueueAt(queue []string, index int, track Track, source string, position float64) State {
+	st, _ := p.play(queue, index, track, source, "", position)
 	return st
 }
 
@@ -94,10 +99,10 @@ func (p *Player) PlayQueue(queue []string, index int, track Track, source string
 // An empty expectPath always applies. The bool is false when a concurrent
 // advance already moved on, so a second next/prev from another tab is ignored.
 func (p *Player) PlayIfCurrent(queue []string, index int, track Track, source, expectPath string) (State, bool) {
-	return p.play(queue, index, track, source, expectPath)
+	return p.play(queue, index, track, source, expectPath, 0)
 }
 
-func (p *Player) play(queue []string, index int, track Track, source, expectPath string) (State, bool) {
+func (p *Player) play(queue []string, index int, track Track, source, expectPath string, position float64) (State, bool) {
 	p.mu.Lock()
 	if expectPath != "" && (p.state.Track == nil || p.state.Track.Path != expectPath) {
 		out := clone(p.state)
@@ -112,8 +117,11 @@ func (p *Player) play(queue []string, index int, track Track, source, expectPath
 	p.state.Queue = append([]string(nil), queue...)
 	p.state.QueueIndex = index
 	p.state.Track = &track
+	if position < 0 {
+		position = 0
+	}
 	p.state.Playing = true
-	p.state.Position = 0
+	p.state.Position = position
 	p.state.Source = source
 	p.posGuardUntil = time.Now().Add(posGuard)
 	p.state.SeekSeq++

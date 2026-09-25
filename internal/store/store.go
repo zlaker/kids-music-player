@@ -40,10 +40,12 @@ type Playlist struct {
 }
 
 type Store struct {
-	dir       string
-	mu        sync.Mutex
-	history   []HistoryItem
-	playlists []Playlist
+	dir        string
+	mu         sync.Mutex
+	history    []HistoryItem
+	playlists  []Playlist
+	progress   progressFile
+	progressAt time.Time
 }
 
 func Open(dir string) (*Store, error) {
@@ -66,6 +68,12 @@ func Open(dir string) (*Store, error) {
 	}
 	if s.playlists == nil {
 		s.playlists = []Playlist{}
+	}
+	if err := s.loadJSON("progress.json", &s.progress); err != nil {
+		return nil, err
+	}
+	if s.progress.Albums == nil {
+		s.progress.Albums = map[string]AlbumProgress{}
 	}
 	return s, nil
 }
@@ -354,7 +362,7 @@ func dedupeHistory(items []HistoryItem) []HistoryItem {
 
 func knownStateFile(name string) error {
 	switch name {
-	case "history.json", "playlists.json":
+	case "history.json", "playlists.json", "progress.json":
 		return nil
 	default:
 		return fmt.Errorf("unknown state file %s", name)

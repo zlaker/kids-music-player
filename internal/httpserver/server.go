@@ -162,11 +162,19 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		_, it.Played = played[e.Path]
 		out = append(out, it)
 	}
-	s.respondJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"path":   rel,
 		"parent": parent,
 		"items":  out,
-	})
+	}
+	if rel == "" {
+		if info, ok := s.continueInfo(s.store.LastProgress()); ok {
+			body["continue"] = info
+		}
+	} else if info, ok := s.continueInfo(s.store.AlbumProgress(rel)); ok {
+		body["progress"] = info
+	}
+	s.respondJSON(w, http.StatusOK, body)
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +325,15 @@ func (s *Server) playFolder(w http.ResponseWriter, folder, start string) {
 		s.respondError(w, http.StatusNotFound, "в папке нет mp3")
 		return
 	}
-	s.startQueue(w, queue, start, "folder:"+folder)
+	position := 0.0
+	if prog, ok := s.store.AlbumProgress(folder); ok {
+		if start == "" {
+			start, position = resumePoint(queue, prog)
+		} else if prog.Path == start {
+			position = resumeSeconds(prog)
+		}
+	}
+	s.startQueue(w, queue, start, "folder:"+folder, position)
 }
 
 func (s *Server) playPlaylist(w http.ResponseWriter, id, start string) {
@@ -337,20 +353,27 @@ func (s *Server) playPlaylist(w http.ResponseWriter, id, start string) {
 		s.respondError(w, http.StatusNotFound, "в плейлисте нет доступных треков")
 		return
 	}
-	s.startQueue(w, queue, start, "playlist:"+id)
+	s.startQueue(w, queue, start, "playlist:"+id, 0)
 }
 
-func (s *Server) startQueue(w http.ResponseWriter, queue []string, prefer, source string) {
+func (s *Server) startQueue(w http.ResponseWriter, queue []string, prefer, source string, position float64) {
 	index, ok := player.ChooseStart(queue, prefer, s.store.HistorySet(), s.player.Random())
 	if !ok {
 		s.respondError(w, http.StatusConflict, "все треки уже звучали — очистите историю")
 		return
 	}
-	s.respondJSON(w, http.StatusOK, s.player.PlayQueue(queue, index, s.trackOf(queue[index]), source))
+	if prefer != "" && queue[index] != prefer {
+		position = 0
+	}
+	state := s.player.PlayQueueAt(queue, index, s.trackOf(queue[index]), source, position)
+	s.persistProgress(true)
+	s.respondJSON(w, http.StatusOK, state)
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
-	s.respondJSON(w, http.StatusOK, s.player.Pause())
+	state := s.player.Pause()
+	s.persistProgress(true)
+	s.respondJSON(w, http.StatusOK, state)
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +388,9 @@ func (s *Server) handleSeek(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
-	s.respondJSON(w, http.StatusOK, s.player.Seek(req.Seconds))
+	state := s.player.Seek(req.Seconds)
+	s.persistProgress(true)
+	s.respondJSON(w, http.StatusOK, state)
 }
 
 func (s *Server) handleNext(w http.ResponseWriter, r *http.Request) {
@@ -420,14 +445,16 @@ func (s *Server) handleRandom(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePosition(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeJSON[struct {
-		Path    string  `json:"path"`
-		Seconds float64 `json:"seconds"`
+		Path     string  `json:"path"`
+		Seconds  float64 `json:"seconds"`
+		Duration float64 `json:"duration"`
 	}](r)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, "некорректный запрос")
 		return
 	}
 	s.player.ReportPosition(req.Path, req.Seconds)
+	s.savePlace(req.Path, req.Seconds, req.Duration, false)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -662,6 +689,84 @@ func (s *Server) trackOf(rel string) player.Track {
 		Artist: info.Artist,
 		Album:  info.Album,
 	}
+}
+
+type continueInfo struct {
+	Folder   string  `json:"folder"`
+	Path     string  `json:"path"`
+	Title    string  `json:"title"`
+	Album    string  `json:"album"`
+	Artist   string  `json:"artist"`
+	Seconds  float64 `json:"seconds"`
+	Duration float64 `json:"duration"`
+	HasCover bool    `json:"hasCover"`
+}
+
+func (s *Server) continueInfo(prog store.AlbumProgress, ok bool) (continueInfo, bool) {
+	if !ok || prog.Path == "" {
+		return continueInfo{}, false
+	}
+	if _, err := s.lib.Stat(prog.Path); err != nil {
+		return continueInfo{}, false
+	}
+	info := s.meta.For(prog.Path)
+	album := info.Album
+	if album == "" {
+		album = path.Base(prog.Folder)
+	}
+	if album == "." || album == "" {
+		album = "Альбом"
+	}
+	return continueInfo{
+		Folder:   prog.Folder,
+		Path:     prog.Path,
+		Title:    info.Title,
+		Album:    album,
+		Artist:   info.Artist,
+		Seconds:  prog.Seconds,
+		Duration: prog.Duration,
+		HasCover: info.HasCover,
+	}, true
+}
+
+func (s *Server) persistProgress(force bool) {
+	snap := s.player.Snapshot()
+	if snap.Track == nil {
+		return
+	}
+	s.savePlace(snap.Track.Path, snap.Position, 0, force)
+}
+
+func (s *Server) savePlace(file string, seconds, duration float64, force bool) {
+	folder, err := s.lib.FolderOf(file)
+	if err != nil {
+		s.logger.Error("progress folder", slog.Any("err", err))
+		return
+	}
+	if err := s.store.SaveProgress(folder, file, seconds, duration, force); err != nil {
+		s.logger.Error("save progress", slog.Any("err", err))
+	}
+}
+
+func resumePoint(queue []string, prog store.AlbumProgress) (start string, position float64) {
+	start = prog.Path
+	position = resumeSeconds(prog)
+	if prog.Duration <= 0 || prog.Seconds < prog.Duration-2 {
+		return start, position
+	}
+	for i, rel := range queue {
+		if rel == prog.Path && i+1 < len(queue) {
+			return queue[i+1], 0
+		}
+	}
+	return start, position
+}
+
+func resumeSeconds(prog store.AlbumProgress) float64 {
+	if prog.Seconds < 0 {
+		return 0
+	}
+	return prog.Seconds
 }
 
 func (s *Server) libraryError(w http.ResponseWriter, err error) {
